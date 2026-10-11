@@ -35,15 +35,24 @@ export function AppLayout({ routes }: AppLayoutProps): ReactElement {
 
   const { t } = useTranslation();
   const { items: menuItems, denied } = useRouteNavigation(routes);
-  const selectedKey = selectedNavigationId(
-    routes,
-    useLocation().pathname,
-    denied,
-  );
+  const location = useLocation();
+  const selectedKey = selectedNavigationId(routes, location.pathname, denied);
   const navigationLabel = t('navigation.label', {
     defaultValue: 'Application navigation',
   });
 
+  // This explicitly declared authenticated embed route keeps the same route/page/API guards
+  // while omitting navigation chrome, so a partner host does not nest a second application shell.
+  if (location.pathname.includes('/integrations/embed/work-board'))
+    return (
+      <RouteTreeProvider routes={routes}>
+        <PageBreadcrumbProvider>
+          <main className='relative min-h-dvh bg-background text-foreground'>
+            <Outlet />
+          </main>
+        </PageBreadcrumbProvider>
+      </RouteTreeProvider>
+    );
   return (
     // The shell owns the business route tree used by its pages and navigation.
     <RouteTreeProvider routes={routes}>

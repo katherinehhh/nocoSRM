@@ -1,5 +1,15 @@
+import type React from 'react';
 import {
   Home,
+  Presentation,
+  Map,
+  KanbanSquare,
+  BookOpen,
+  Plug,
+  Printer,
+  Mail,
+  Bot,
+  Settings2,
   Boxes,
   Wallet,
   Workflow,
@@ -92,7 +102,182 @@ const documentRoutes = (kind: string, path: string, prefix = 'ops') => ({
     },
   ],
 });
+const showcaseDetail = (owner: string) => ({
+  name: `showcase-${owner}-record`,
+  path: ':id',
+  componentLoader: () => import('./pages/showcase/detail.js'),
+  children: [
+    {
+      name: `showcase-${owner}-edit`,
+      path: 'edit',
+      componentLoader: () => import('./pages/showcase/form.js'),
+    },
+  ],
+});
+const showcasePage = (
+  name: string,
+  path: string,
+  title: string,
+  icon: typeof FileText,
+  componentLoader: () => Promise<{ default: React.ComponentType }>,
+) => ({
+  name: `showcase-${name}`,
+  path,
+  auth: 'required' as const,
+  authz: {
+    resource: { type: 'page' as const, id: `showcase.${name}` },
+    action: 'access',
+  },
+  navigation: { title, icon },
+  componentLoader,
+});
 const appRoutes: AppClientRouteContribution = defineAppRoutes([
+  {
+    name: 'showcase-embedded-board',
+    path: '/integrations/embed/work-board',
+    auth: 'required',
+    authz: {
+      resource: { type: 'page', id: 'showcase.workBoard' },
+      action: 'access',
+    },
+    componentLoader: () => import('./pages/showcase/board.js'),
+    children: [showcaseDetail('embed-board')],
+  },
+  {
+    name: 'showcase-group',
+    navigation: { title: 'showcase.group', icon: Presentation },
+    children: [
+      {
+        ...showcasePage(
+          'guide',
+          '/showcase',
+          'showcase.guide',
+          Map,
+          () => import('./pages/showcase/index.js'),
+        ),
+        children: [showcaseDetail('guide')],
+      },
+      {
+        ...showcasePage(
+          'deliveryPlans',
+          '/delivery-plans',
+          'showcase.deliveryPlans',
+          Truck,
+          () => import('./pages/showcase/list.js'),
+        ),
+        children: [
+          {
+            name: 'showcase-delivery-new',
+            path: 'new',
+            componentLoader: () => import('./pages/showcase/form.js'),
+          },
+          showcaseDetail('delivery'),
+        ],
+      },
+      {
+        ...showcasePage(
+          'workBoard',
+          '/work-board',
+          'showcase.board',
+          KanbanSquare,
+          () => import('./pages/showcase/board.js'),
+        ),
+        children: [showcaseDetail('board')],
+      },
+      {
+        ...showcasePage(
+          'ledger',
+          '/business-ledger',
+          'showcase.ledger',
+          BookOpen,
+          () => import('./pages/showcase/list.js'),
+        ),
+        children: [
+          {
+            name: 'showcase-ledger-record',
+            path: ':id',
+            componentLoader: () => import('./pages/showcase/ledger-detail.js'),
+            children: [
+              {
+                name: 'showcase-ledger-resolve',
+                path: 'resolve',
+                componentLoader: () => import('./pages/showcase/resolve.js'),
+              },
+            ],
+          },
+        ],
+      },
+      showcasePage(
+        'integrations',
+        '/integrations',
+        'showcase.integrations',
+        Plug,
+        () => import('./pages/showcase/integrations.js'),
+      ),
+      {
+        ...showcasePage(
+          'templates',
+          '/print-templates',
+          'showcase.templates',
+          Printer,
+          () => import('./pages/showcase/templates.js'),
+        ),
+        children: [
+          {
+            name: 'showcase-template-edit',
+            path: 'edit',
+            componentLoader: () => import('./pages/showcase/template-edit.js'),
+          },
+        ],
+      },
+      showcasePage(
+        'mail',
+        '/mail-center',
+        'showcase.mail',
+        Mail,
+        () => import('./pages/showcase/mail.js'),
+      ),
+      {
+        ...showcasePage(
+          'mailAccounts',
+          '/mail-accounts',
+          'showcase.mail',
+          Mail,
+          () => import('./pages/showcase/mail-accounts.js'),
+        ),
+        navigation: undefined,
+      },
+      showcasePage(
+        'ai',
+        '/ai-workbench',
+        'showcase.ai',
+        Bot,
+        () => import('./pages/showcase/assistant.js'),
+      ),
+      {
+        ...showcasePage(
+          'models',
+          '/model-services',
+          'showcase.models',
+          Settings2,
+          () => import('./pages/showcase/models.js'),
+        ),
+        children: [
+          {
+            name: 'showcase-model-new',
+            path: 'new',
+            componentLoader: () => import('./pages/showcase/model-form.js'),
+          },
+          {
+            name: 'showcase-model-edit',
+            path: ':id/edit',
+            componentLoader: () => import('./pages/showcase/model-form.js'),
+          },
+        ],
+      },
+    ],
+  },
+
   {
     name: 'operations-dashboard',
     path: '/operations',

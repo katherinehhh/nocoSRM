@@ -1,3 +1,4 @@
+import showcase from './showcase-en-US.js';
 import operations from './operations-en-US.js';
 import type { LocaleResource } from '@nocobase/i18n';
 
@@ -8,6 +9,7 @@ const enUS = {
   // `./system/` so a template upgrade can replace it without touching the application's copy below.
   ...systemEnUS,
   ops: operations,
+  showcase,
   // The application's copy goes here, one group per feature. A shared group such as `navigation` is extended by
   // spreading the system one first, `navigation: { ...systemEnUS.navigation, orders: 'Orders' }`, since a group
   // written here replaces the system group of the same name rather than merging with it.

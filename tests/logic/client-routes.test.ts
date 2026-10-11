@@ -56,6 +56,21 @@ describe('app client routes', () => {
         { name: 'home', authorizedAs: null },
         { name: 'inbox', authorizedAs: null },
         { name: 'ops-orders', authorizedAs: 'operations.orders' },
+        ...[
+          'guide',
+          'deliveryPlans',
+          'workBoard',
+          'ledger',
+          'integrations',
+          'templates',
+          'mail',
+          'mailAccounts',
+          'ai',
+          'models',
+        ].map((name) => ({
+          name: `showcase-${name}`,
+          authorizedAs: `showcase.${name}`,
+        })),
         { name: 'ops-payments', authorizedAs: 'operations.payments' },
         { name: 'portal-home', authorizedAs: 'operations.portal' },
         {

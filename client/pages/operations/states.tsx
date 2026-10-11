@@ -7,11 +7,13 @@ export function State({
   error,
   empty,
   retry,
+  emptyLabel,
 }: {
   loading?: boolean;
   error?: unknown;
   empty?: boolean;
   retry?: () => void;
+  emptyLabel?: string;
 }) {
   const { t } = useCopy();
   if (loading)
@@ -44,7 +46,7 @@ export function State({
   }
   return empty ? (
     <div className='rounded-xl border border-dashed p-12 text-center text-muted-foreground'>
-      {t('ops.empty')}
+      {emptyLabel ?? t('ops.empty')}
     </div>
   ) : null;
 }
@@ -72,7 +74,9 @@ export function Status({ value }: { value: string }) {
               : 'neutral'
       }
     >
-      {t(`ops.status.${value}`, { defaultValue: value })}
+      {t(`ops.status.${value}`, {
+        defaultValue: t(`showcase.states.${value}`, { defaultValue: value }),
+      })}
     </StatusBadge>
   );
 }

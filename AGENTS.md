@@ -435,3 +435,7 @@ Navigation groups retain their expanded or collapsed state while the navigation 
 ## Branded loading
 
 Use `Loading` for page or panel waits and `Spinner` (the shadcn-compatible adapter to `BrandSpinner`) for inline pending actions, uploads, and refresh indicators. Both share the stable NocoBase mark and orbit animation; do not introduce independent Lucide spinners for application loading. Keep skeletons for content placeholders and progress bars for determinate progress. `index.html` has the matching pre-JavaScript mark and must stay visually consistent. All animations respect reduced motion.
+
+## Customer demonstration embed
+
+The authenticated `/integrations/embed/work-board` route uses the same page and server guards with a reduced AppLayout, omitting sidebar/header chrome for local partner embedding. This application shell exception is path-specific; other routes retain normal navigation, account controls, authorization refresh and locale synchronization. Both local iframe directions use sandbox attributes; no global CSP or authentication relaxation is introduced.
