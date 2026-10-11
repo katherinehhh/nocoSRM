@@ -1,0 +1,13 @@
+import { defineMigration } from '@nocobase/db';
+// Self-contained immutable schema, independent of evolving runtime catalog.
+const names=['Suppliers','Materials','Warehouses','Plans','Orders','Dispatches','Receipts','Invoices','Settlements','Payments','Reconciliations','TaxScenarios','Policies','Runs','Tasks'];
+export default defineMigration({name:'202610100001_operations',async up({builder}){
+ for(const name of names) await builder.createCollection(`ops${name}`,c=>{
+ c.string('id',{length:64}).notNull();c.primary('id');c.string('number',{length:80}).notNull();c.unique('number');c.string('name',{length:200}).notNull();c.string('organizationId',{length:64}).notNull();c.string('supplierId',{length:64}).nullable();c.string('status',{length:32}).notNull();c.integer('version').notNull().defaultTo(1);c.decimal('amount',{precision:18,scale:0}).notNull().defaultTo(0);c.string('businessDate',{length:10}).notNull();c.text('notes').notNull();c.text('payload').notNull();c.string('createdBy',{length:64}).notNull();c.string('createdAt',{length:32}).notNull();c.string('updatedAt',{length:32}).notNull();c.boolean('demo').notNull().defaultTo(false);c.index(['organizationId','supplierId','status']);
+ });
+ await builder.createCollection('opsAudit',c=>{c.string('id',{length:64}).notNull();c.primary('id');c.string('documentId',{length:64}).notNull();c.string('kind',{length:32}).notNull();c.string('actorId',{length:64}).notNull();c.string('action',{length:32}).notNull();c.string('fromStatus',{length:32}).notNull();c.string('toStatus',{length:32}).notNull();c.string('at',{length:32}).notNull();c.index(['documentId','at']);});
+ await builder.createCollection('opsKeys',c=>{c.string('id',{length:200}).notNull();c.primary('id');c.text('result').notNull();});
+ await builder.createCollection('opsMemberships',c=>{c.string('id',{length:64}).notNull();c.primary('id');c.string('userId',{length:64}).notNull();c.unique('userId');c.string('organizationId',{length:64}).notNull();c.string('supplierId',{length:64}).nullable();});
+ await builder.createCollection('opsSettings',c=>{c.string('id',{length:64}).notNull();c.primary('id');c.text('payload').notNull();c.integer('version').notNull();});
+ await builder.createCollection('opsStock',c=>{c.string('id',{length:140}).notNull();c.primary('id');c.string('materialId',{length:64}).notNull();c.string('warehouseId',{length:64}).notNull();c.string('sourceId',{length:64}).notNull();c.decimal('quantityMilli',{precision:18,scale:0}).notNull();c.string('at',{length:32}).notNull();c.index(['materialId','warehouseId']);});
+},async down({builder}){for(const n of ['opsStock','opsSettings','opsMemberships','opsKeys','opsAudit',...names.reverse().map(n=>`ops${n}`)])await builder.dropCollection(n);}});
