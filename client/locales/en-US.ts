@@ -1,3 +1,4 @@
+import srmMail from './mail-settings-en-US.js';
 import srmApproval from './srm-approval-en-US.js';
 import approvalUiLocale from '../extensions/nocobase-approval-ui/locales/en-US.js';
 import { approvalLocaleEnUS } from '@nocobase/app-plugin-approval/client';
@@ -19,6 +20,7 @@ const enUS = {
   core,
   srmAi,
   srmApproval,
+  srmMail,
   ...approvalUiLocale,
   ...approvalLocaleEnUS,
   showcase,

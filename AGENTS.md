@@ -443,3 +443,7 @@ The authenticated `/integrations/embed/work-board` route uses the same page and 
 ## Operational workspace routing
 
 The SRM workspace lives at `/workspace`; `/` and legacy `/showcase` redirect there. It owns contextual record children so overlays return to the workspace. In `client/routing/route-tree.tsx`, pure navigation groups whose resolved path is `/` render as pathless React Router groups. They own no page and must not compete with the landing route; prefix groups such as `/supply` keep their paths. Preserve this correction when upgrading the template; permissions and actual page routes are unchanged.
+
+## Mail provider configuration
+
+The administrator page `/mail-services` configures built-in Mail provider instances through application-owned `/srmMail/providers` routes guarded by `settings:operations.admin.update`. Preserve `mailSettingsSource` in `server/config.ts`: it loads the private `storage/mail-provider-settings.json` provider layer through the native AppConfig interface. Save reloads native configuration and the Mail plugin reads providers dynamically. Keep version checks, atomic writes, rollback, field-whitelisted responses and secret preservation. Do not serve this file, return client secrets, rename provider instances, modify Mail plugin tables, or treat configuration validation as live OAuth authorization or message delivery. Mailbox credentials and account ownership remain with the native Mail account components; notification SMTP channels are separate.

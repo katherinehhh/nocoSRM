@@ -365,6 +365,17 @@ const pageDefinitions: AppClientRouteDefinition[] = [
     })),
   },
   {
+    name: 'srm-mail-services',
+    path: '/mail-services',
+    auth: 'required',
+    authz: {
+      resource: { type: 'settings', id: 'operations.admin' },
+      action: 'update',
+    },
+    navigation: { title: 'srmMail.title', icon: Mail },
+    componentLoader: () => import('./pages/mail-settings/index.js'),
+  },
+  {
     name: 'operations-settings',
     path: '/operationsSettings',
     auth: 'required',
@@ -622,6 +633,7 @@ const legacyGroup = pageDefinitions.find((r) => r.name === 'showcase-group')!;
 const configurationNames = new Set([
   'showcase-integrations',
   'showcase-templates',
+  'srm-mail-services',
   'showcase-mail',
   'showcase-models',
   'showcase-mailAccounts',

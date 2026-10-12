@@ -1,3 +1,4 @@
+import { mailSettingsSource } from './mail-settings/storage.js';
 import {
   AppConfig,
   resolveDefaultAppConfigFile,
@@ -19,6 +20,11 @@ export function createAppConfig(
   // Environment variables are declared by the sections they set, in `env` of each `defineAppConfig`, and loaded
   // above this file once the sections are known. `pnpm nocobase config env` lists them.
   config.loadFile(configPath, { optional: configuredPath === undefined });
+
+  // Private UI-managed mail settings layer over deployment configuration; reload is native.
+  config.load(
+    mailSettingsSource(context.paths.storage('mail-provider-settings.json')),
+  );
 
   return config;
 }

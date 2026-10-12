@@ -1,3 +1,4 @@
+import srmMail from './mail-settings-zh-CN.js';
 import srmApproval from './srm-approval-zh-CN.js';
 import approvalUiLocale from '../extensions/nocobase-approval-ui/locales/zh-CN.js';
 import { approvalLocaleZhCN } from '@nocobase/app-plugin-approval/client';
@@ -17,6 +18,7 @@ const zhCN: AppResource = {
   core,
   srmAi,
   srmApproval,
+  srmMail,
   ...approvalUiLocale,
   ...approvalLocaleZhCN,
   showcase,
