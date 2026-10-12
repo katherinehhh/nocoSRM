@@ -98,6 +98,10 @@ export default {
     rejected: '不合格数量',
   },
   actions: {
+    purchasingApproved: '采购负责人批准',
+    departmentApproved: '部门负责人批准',
+    awardRejected: '原生审批拒绝',
+    awardReturned: '原生审批退回',
     renew: '更新资质',
     post: '入库过账',
     view: '查看',
@@ -117,6 +121,8 @@ export default {
     cancel: '取消',
   },
   status: {
+    purchasingReview: '采购负责人审批',
+    departmentReview: '部门负责人审批',
     draft: '草稿',
     open: '报价中',
     pending: '待独立审批',

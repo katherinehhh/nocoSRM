@@ -11,6 +11,8 @@ export const coreStates = [
   'draft',
   'open',
   'pending',
+  'purchasingReview',
+  'departmentReview',
   'submitted',
   'approved',
   'rejected',
@@ -65,6 +67,7 @@ export const CoreDataSchema = z
   })
   .strict();
 export type CoreData = z.infer<typeof CoreDataSchema> & {
+  reviewers?: { purchasing: string; department: string };
   publishedVersion?: number;
   selectedQuoteId?: string;
   selectedQuoteVersion?: number;

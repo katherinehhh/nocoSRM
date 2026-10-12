@@ -1,3 +1,9 @@
+import { ApprovalError } from '@nocobase/app-plugin-approval/server';
+import {
+  AwardSettingsInput,
+  AwardOperationInput,
+} from '../../shared/srm-approval.js';
+import { awardDirectory } from '../srm-core/approval-directory.js';
 import { SrmAiService } from '../srm-ai/service.js';
 import { AiAnalyzeInput, aiPurposes } from '../../shared/srm-ai.js';
 import { LifecycleError, lifecycleErrorFields } from '@nocobase/lifecycle';
@@ -63,30 +69,37 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
   router.use('*', auth.required(), authz.middleware());
   router.onError((e, c) =>
     apiErrorHandler(
-      e instanceof LifecycleError
+      e instanceof ApprovalError
         ? new ApiError({
-            ...lifecycleErrorFields(e),
-            status: lifecycleErrorFields(e)?.status ?? 'INTERNAL',
-            reason:
-              e.blockers[0]?.code ??
-              lifecycleErrorFields(e)?.reason ??
-              'INVALID',
+            status: 'FAILED_PRECONDITION',
+            reason: e.code,
             domain: 'srmCore',
-            message: e.message,
+            message: 'Approval operation refused.',
           })
-        : e instanceof BusinessError
+        : e instanceof LifecycleError
           ? new ApiError({
-              status:
-                e.code === 'FORBIDDEN'
-                  ? 'PERMISSION_DENIED'
-                  : e.code === 'NOT_FOUND'
-                    ? 'NOT_FOUND'
-                    : 'FAILED_PRECONDITION',
-              reason: e.code,
+              ...lifecycleErrorFields(e),
+              status: lifecycleErrorFields(e)?.status ?? 'INTERNAL',
+              reason:
+                e.blockers[0]?.code ??
+                lifecycleErrorFields(e)?.reason ??
+                'INVALID',
               domain: 'srmCore',
-              message: e.code,
+              message: e.message,
             })
-          : e,
+          : e instanceof BusinessError
+            ? new ApiError({
+                status:
+                  e.code === 'FORBIDDEN'
+                    ? 'PERMISSION_DENIED'
+                    : e.code === 'NOT_FOUND'
+                      ? 'NOT_FOUND'
+                      : 'FAILED_PRECONDITION',
+                reason: e.code,
+                domain: 'srmCore',
+                message: e.code,
+              })
+            : e,
       c,
     ),
   );
@@ -162,6 +175,69 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
       permissions: await permissions(c),
     };
   }
+  router.get('/srmCore/award/settings', doc('Award settings'), async (c) => {
+    await c.get('authz').require({
+      resource: { type: 'settings', id: 'operations.admin' },
+      action: 'update',
+    });
+    const a = await actor(c, 'rfq', 'view');
+    return c.json({
+      data: {
+        settings: await service.award!.settings(undefined, a.organizationId),
+        people: (
+          await awardDirectory(
+            service.db.connection(),
+            app.container,
+            a.organizationId,
+          )
+        ).people,
+      },
+    });
+  });
+  router.post(
+    '/srmCore/award/settings',
+    doc('Configure award settings'),
+    apiValidator('json', AwardSettingsInput),
+    async (c) => {
+      await c.get('authz').require({
+        resource: { type: 'settings', id: 'operations.admin' },
+        action: 'update',
+      });
+      const a = await actor(c, 'rfq', 'view');
+      return c.json({
+        data: await service.award!.configure(a, c.req.valid('json')),
+      });
+    },
+  );
+  router.get(
+    '/srmCore/award/:id',
+    doc('Award approval history'),
+    apiValidator('param', z.object({ id: z.string().uuid() })),
+    async (c) =>
+      c.json({
+        data: await service.award!.read(
+          await actor(c, 'rfq', 'view'),
+          c.req.valid('param').id,
+        ),
+      }),
+  );
+  router.post(
+    '/srmCore/award/:id',
+    doc('Award approval operation'),
+    apiValidator('param', z.object({ id: z.string().uuid() })),
+    apiValidator('json', AwardOperationInput),
+    async (c) => {
+      const input = c.req.valid('json'),
+        a = await actor(
+          c,
+          'rfq',
+          input.action === 'approve' ? 'approve' : 'reject',
+        );
+      return c.json({
+        data: await service.award!.perform(a, c.req.valid('param').id, input),
+      });
+    },
+  );
   const ai = new SrmAiService(service, app);
   const aiAction = (purpose: (typeof aiPurposes)[number]) =>
     purpose === 'qualityReturn'
@@ -334,7 +410,9 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
     let capped = false;
     for (const kind of coreKinds) {
       if (!caps[kind].includes('view')) continue;
-      const a = await actor(c, kind, 'view');
+      let a = await actor(c, kind, 'view');
+      if (kind === 'rfq' && !a.supplierId)
+        a = (await service.award!.context(a)).actor;
       await coreContext.run(a, async () => {
         const conn = service.db.connection(),
           rows = await service.repo(conn, a).findMany({
@@ -343,6 +421,8 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
                 'draft',
                 'open',
                 'pending',
+                'purchasingReview',
+                'departmentReview',
                 'submitted',
                 'rejected',
                 'shipped',
@@ -360,6 +440,13 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
             .filter((transition) => transition.allowed)
             .map((v) => v.name)
             .filter((action) => caps[kind].includes(action));
+          const nativeActions =
+            kind === 'rfq' && !a.supplierId && caps.rfq.includes('approve')
+              ? (await service.award!.read(a, r.id)).actions
+              : [];
+          const hasApprovalTask = nativeActions.some(
+            (item) => item.actions.length > 0,
+          );
           let action = [
             'approve',
             'submit',
@@ -369,6 +456,7 @@ export const coreRoutes = defineApiRoutes((app: Application) => {
             'ship',
             'revise',
           ].find((v) => available.includes(v));
+          if (hasApprovalTask) action = 'approve';
           if (
             kind === 'rfq' &&
             a.supplierId &&

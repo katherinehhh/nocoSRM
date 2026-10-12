@@ -4,6 +4,11 @@ import type { LocaleResource } from '@nocobase/i18n';
 // plugin's namespace; add keys here as the application starts producing its own, and use `overrides` to reword a
 // plugin's.
 const enUS = {
+  srmApproval: {
+    noticeTitle: 'Purchase award approval pending',
+    noticeBody:
+      'A new approval task has been assigned to you. Open the quotation, review the evidence and enter your opinion.',
+  },
   showcase: {
     externalTitle: 'Local external system demonstration',
     externalNotice:

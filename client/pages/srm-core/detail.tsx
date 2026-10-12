@@ -1,3 +1,5 @@
+import Award from './award.js';
+import { useQueryClient } from '@tanstack/react-query';
 import { CoreStatus } from './presentation.js';
 import { useState } from 'react';
 import { Link, Outlet, useLocation, useParams } from 'react-router';
@@ -51,6 +53,7 @@ export default function CoreDetail({
   idParam = 'id',
 }: { kind?: CoreKind; idParam?: string } = {}) {
   useChildFocus();
+  const cache = useQueryClient();
   const inferredKind = useCoreKind(),
     kind = override ?? inferredKind,
     id = useParams()[idParam],
@@ -59,18 +62,37 @@ export default function CoreDetail({
     q = useCore<{ data: DetailData }>(`${kind}/${id}`),
     lookups = useCore<{ data: CoreLookups }>(`lookups/${kind}`),
     write = useCoreWrite(),
-    caps = useCore<{ data: { permissions: Record<string, string[]> } }>(
-      'capabilities',
-    );
+    caps = useCore<{
+      data: {
+        permissions: Record<string, string[]>;
+        supplierId: string | null;
+      };
+    }>('capabilities');
   const [action, setAction] = useState(''),
     [reason, setReason] = useState(''),
     [quote, setQuote] = useState(''),
     [tracking, setTracking] = useState(''),
     [key, setKey] = useState(() => crypto.randomUUID()),
     [pending, setPending] = useState(false),
-    [error, setError] = useState('');
+    [error, setError] = useState(''),
+    [refreshing, setRefreshing] = useState(false);
   const d = q.data?.data,
     r = d?.record;
+  const refresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        q.refetch(),
+        lookups.refetch(),
+        caps.refetch(),
+        ...(kind === 'rfq'
+          ? [cache.invalidateQueries({ queryKey: ['srmCore', `award/${id}`] })]
+          : []),
+      ]);
+    } finally {
+      setRefreshing(false);
+    }
+  };
   const choose = (name: string) => {
     setKey(crypto.randomUUID());
     setAction(name);
@@ -134,8 +156,8 @@ export default function CoreDetail({
                   </Button>
                 )}
                 <Refresh
-                  pending={q.isFetching}
-                  onClick={() => void q.refetch()}
+                  pending={q.isFetching || refreshing}
+                  onClick={() => void refresh()}
                 />
               </>
             }
@@ -492,6 +514,9 @@ export default function CoreDetail({
                 </CardContent>
               </Card>
             </>
+          )}
+          {kind === 'rfq' && r && caps.data && !caps.data.data.supplierId && (
+            <Award id={r.id} name={r.name} refreshRecord={() => q.refetch()} />
           )}
         </PageContainer>
       </RouteChildPage>

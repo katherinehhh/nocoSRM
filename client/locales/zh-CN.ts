@@ -1,3 +1,6 @@
+import srmApproval from './srm-approval-zh-CN.js';
+import approvalUiLocale from '../extensions/nocobase-approval-ui/locales/zh-CN.js';
+import { approvalLocaleZhCN } from '@nocobase/app-plugin-approval/client';
 import srmAi from './srm-ai-zh-CN.js';
 import core from './core-zh-CN.js';
 import srm from './srm-zh-CN.js';
@@ -13,6 +16,9 @@ const zhCN: AppResource = {
   srm,
   core,
   srmAi,
+  srmApproval,
+  ...approvalUiLocale,
+  ...approvalLocaleZhCN,
   showcase,
 };
 

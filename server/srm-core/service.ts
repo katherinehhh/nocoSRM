@@ -1,3 +1,6 @@
+import { awardDirectory } from './approval-directory.js';
+import type { ApprovalDirectory } from '@nocobase/app-plugin-approval/server';
+import type { AwardService } from './award-service.js';
 import { randomUUID, createHash } from 'node:crypto';
 import type { DatabaseManager, RepositoryPolicy } from '@nocobase/db';
 import type { FilterAst, FilterNode } from '@nocobase/repository-input';
@@ -20,6 +23,9 @@ import {
 } from '../providers/operations/service.js';
 import type { Doc } from '../../shared/operations.js';
 export interface CoreActor extends Actor {
+  directory?: ApprovalDirectory;
+  awardEnabled?: boolean;
+  awardPeople?: { id: string; name: string }[];
   permissions: Record<CoreKind, string[]>;
 }
 export function coreFail(
@@ -70,6 +76,7 @@ const hash = (v: unknown) =>
 const data = (row: CoreRow): CoreData => decodeCore(row).data;
 const whole = (n: number) => Number.isInteger(n) && n >= 0;
 export class CoreService {
+  award?: AwardService;
   constructor(
     readonly db: DatabaseManager,
     readonly runtime: LifecycleRuntime,
@@ -278,6 +285,25 @@ export class CoreService {
     actorId: string,
   ) {
     const d = data(row);
+    if (
+      row.kind === 'rfq' &&
+      ['purchasingReview', 'departmentReview'].includes(row.status) &&
+      ['approve', 'reject'].includes(action)
+    ) {
+      const current = await awardDirectory(
+        c,
+        this.award!.services,
+        row.organizationId,
+      );
+      if (!current.directory.isActive(actorId))
+        coreFail('FORBIDDEN', 'PERMISSION_DENIED');
+    }
+    if (
+      action === 'cancel' &&
+      ['purchasingReview', 'departmentReview'].includes(row.status) &&
+      actorId !== row.submittedBy
+    )
+      coreFail('FORBIDDEN', 'PERMISSION_DENIED');
     if (
       ['approve', 'reject'].includes(action) &&
       (row.createdBy === actorId || row.submittedBy === actorId)
@@ -612,12 +638,17 @@ export class CoreService {
     input: Record<string, unknown>,
     transaction?: Connection,
   ) {
+    if (kind === 'rfq' && this.award)
+      a = (await this.award.context(a, transaction)).actor;
     return this.once(
       a,
       String(input.requestKey),
       { kind, id, action, input },
       async (c) => {
         await this.get(c, a, kind, id);
+        if (kind === 'rfq')
+          a.awardEnabled =
+            (await this.award?.settings(c, a.organizationId))?.enabled ?? false;
         const fired = await this.runtime.fire('srmCoreRecords', id, action, {
           actor: { id: a.id },
           input: input as JsonObject,
@@ -727,19 +758,53 @@ export class CoreService {
   }
   services(c: Connection) {
     return {
-      select: async (r: CoreRow, input: Record<string, unknown>) => ({
-        ...data(r),
-        selectedQuoteId: String(input.selectedQuoteId),
-        selectedQuoteVersion: (
-          await this.parent(
-            c,
-            'quote',
-            String(input.selectedQuoteId),
-            r.organizationId,
-          )
-        ).lifecycleVersion,
-        decisionReason: String(input.reason),
-      }),
+      notify: (
+        taskId: string,
+        personId: string,
+        recordId: string,
+        reason: string,
+      ) => this.award!.notify(taskId, personId, recordId, reason),
+      awardEnabled: coreContext.getStore()?.awardEnabled ?? false,
+      directory: coreContext.getStore()?.directory ?? {
+        isActive: () => false,
+        managerOf: () => undefined,
+        hasRole: () => false,
+      },
+      select: async (r: CoreRow, input: Record<string, unknown>) => {
+        const settings = await this.award?.settings(c, r.organizationId);
+        const reviewers = settings?.enabled
+          ? { purchasing: settings.purchasing, department: settings.department }
+          : undefined;
+        if (
+          reviewers &&
+          (!reviewers.purchasing ||
+            !reviewers.department ||
+            reviewers.purchasing === reviewers.department ||
+            [r.createdBy, coreContext.getStore()?.id].some(
+              (id) =>
+                id === reviewers.purchasing || id === reviewers.department,
+            ) ||
+            !coreContext
+              .getStore()
+              ?.directory?.isActive(reviewers.purchasing) ||
+            !coreContext.getStore()?.directory?.isActive(reviewers.department))
+        )
+          coreFail('APPROVAL_REVIEWERS_REQUIRED');
+        return {
+          ...data(r),
+          reviewers,
+          selectedQuoteId: String(input.selectedQuoteId),
+          selectedQuoteVersion: (
+            await this.parent(
+              c,
+              'quote',
+              String(input.selectedQuoteId),
+              r.organizationId,
+            )
+          ).lifecycleVersion,
+          decisionReason: String(input.reason),
+        };
+      },
       invitations: (r: CoreRow) => this.invitations(c, r),
       validate: (
         r: CoreRow,

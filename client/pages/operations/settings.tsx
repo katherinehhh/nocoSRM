@@ -1,3 +1,4 @@
+import AwardSettingsCard from './award-settings.js';
 import { useState } from 'react';
 import WorkflowSettings from './workflow-settings.js';
 import { useApiClient, useToaster } from '@nocobase/app-client';
@@ -43,6 +44,7 @@ export default function Settings() {
             />
           );
         })}
+      <AwardSettingsCard />
       <WorkflowSettings />
     </PageContainer>
   );

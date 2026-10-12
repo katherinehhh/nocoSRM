@@ -1,3 +1,7 @@
+import type {
+  RunView,
+  TaskActions,
+} from '@nocobase/app-plugin-approval/client';
 import {
   createTestApp as createFinanceTestApp,
   signIn as financeSignIn,
@@ -211,10 +215,54 @@ test('two apps synchronize tax snapshots, enforce native approval, recover real 
     expect(
       (await action(user, 'approve', { note: 'self approval' })).status,
     ).toBe(403);
+    // Finance now requires its native claimed approval task; legacy direct approval must refuse.
+    expect(
+      (await action(approver, 'approve', { note: 'legacy bypass' })).status,
+    ).toBe(400);
+    async function nativeView() {
+      return (await (
+        await approver.fetch(`/finance/bills/${bill!.id}/approval`)
+      ).json()) as { data: { runs: RunView[]; actions: TaskActions[] } };
+    }
+    let approvalView = await nativeView();
+    const claim = approvalView.data.actions.find((item) =>
+      item.actions.some((action) => action.name === 'claim'),
+    );
+    if (claim) {
+      expect(
+        (
+          await approver.fetch(`/finance/bills/${bill!.id}/approval/actions`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              taskId: claim.task.id,
+              action: 'claim',
+              requestKey: randomUUID(),
+            }),
+          })
+        ).status,
+      ).toBe(200);
+      approvalView = await nativeView();
+    }
+    const approve = approvalView.data.actions.find((item) =>
+      item.actions.some((action) => action.name === 'approve'),
+    )!;
+    expect(approve).toBeDefined();
+    const approvalRun = approvalView.data.runs.find(
+      (run) => run.run.id === approve.task.runId,
+    )!;
     expect(
       (
-        await action(approver, 'approve', {
-          note: '独立审核收货、税额与含税结算金额',
+        await approver.fetch(`/finance/bills/${bill!.id}/approval/actions`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            taskId: approve.task.id,
+            action: 'approve',
+            contentHash: approvalRun.run.contentHash,
+            comment: '独立审核收货、税额与含税结算金额',
+            requestKey: randomUUID(),
+          }),
         })
       ).status,
     ).toBe(200);

@@ -1,0 +1,43 @@
+export default {
+  single: '指定人员审批',
+  settings: '采购定标审批',
+  settingsHint:
+    '启用后，新的定标申请由两名不同人员依次审批；历史申请保持原有审批方式。',
+  enabled: '启用原生两级审批',
+  purchasing: '采购负责人',
+  department: '部门负责人',
+  choose: '选择具备审批权限的人员',
+  save: '保存审批配置',
+  saved: '审批配置已保存',
+  title: '原生定标审批',
+  content:
+    '请审核上方选定报价和定标理由。提交内容已锁定；报价依据变化将拒绝当前审批。',
+  empty: '此单据尚未启动原生审批。',
+  opinion: '审批意见',
+  required: '请填写审批意见。',
+  approve: '批准',
+  reject: '拒绝',
+  return: '退回修改',
+  purchasingReview: '采购负责人审批',
+  departmentReview: '部门负责人审批',
+  confirm: '对“{{name}}”执行{{action}}',
+  consequence:
+    '批准后进入下一级；仅最后一级批准生成采购订单草稿。拒绝结束本次申请，退回重新选择报价。',
+  success: '已对“{{name}}”执行{{action}}',
+  changed: '服务端配置已变化，请保留未保存内容后刷新。',
+  errors: {
+    NO_ASSIGNEE: '下一级没有有效审批人员，请联系管理员恢复配置人员的资格。',
+    NOT_ASSIGNEE: '此任务由其他审批人员处理。',
+    TASK_CLOSED: '此审批任务已结束，请刷新单据。',
+    REASON_REQUIRED: '请填写审批意见。',
+    APPROVAL_REVIEWERS_REQUIRED:
+      '请选择两名不同的有效内部审批人员，且均不能是申请人。',
+    CONFLICT: '单据或配置已变化，请刷新后重新核对。',
+    STALE_CONTENT: '审批内容已变化，请刷新后重新核对。',
+    NOT_ALLOWED: '当前任务已结束或不属于您。',
+    FORBIDDEN: '您没有处理此审批的权限。',
+    SELF_APPROVAL: '申请人不能审批自己的申请。',
+    REQUIRED: '请填写必填内容。',
+    FAILED: '操作失败，已保留填写内容。',
+  },
+};

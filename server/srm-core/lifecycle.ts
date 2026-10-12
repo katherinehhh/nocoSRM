@@ -1,5 +1,13 @@
 import { decodeCore } from '../../shared/srm-core.js';
-import { defineLifecycle } from '@nocobase/lifecycle';
+import {
+  defineApproval,
+  approvalState,
+  stagesFor,
+  approve,
+  reject,
+  returnTo,
+  type ApprovalDirectory,
+} from '@nocobase/app-plugin-approval/server';
 import type { CoreRow, CoreKind, CoreData } from '../../shared/srm-core.js';
 interface Types {
   record: CoreRow;
@@ -7,6 +15,8 @@ interface Types {
     | 'draft'
     | 'open'
     | 'pending'
+    | 'purchasingReview'
+    | 'departmentReview'
     | 'submitted'
     | 'approved'
     | 'rejected'
@@ -16,6 +26,14 @@ interface Types {
     | 'awarded'
     | 'cancelled';
   services: {
+    directory: ApprovalDirectory;
+    awardEnabled: boolean;
+    notify: (
+      taskId: string,
+      personId: string,
+      recordId: string,
+      reason: string,
+    ) => Promise<void>;
     validate: (
       row: CoreRow,
       action: string,
@@ -70,7 +88,20 @@ const eligible =
     }
   };
 const stamp = ({ now }: { now: Date }) => ({ updatedAt: now.toISOString() });
-export const coreLifecycle = defineLifecycle<Types>({
+const stage = stagesFor<Types>();
+const reviewActions = [
+  approve({ reason: 'required' }),
+  reject({ reason: 'required' }),
+  returnTo({ targets: ['open'], reason: 'required' }),
+];
+export const coreLifecycle = defineApproval<Types>({
+  collection: 'srmCoreRecords',
+  version: 1,
+  applicant: (r) => r.submittedBy || r.createdBy,
+  directory: (s) => s.directory,
+  notify: ({ task, services, reason }) =>
+    services.notify(task.id, task.assigneeId, String(task.recordId), reason),
+  freeze: ['name', 'data', 'supplierId', 'submittedBy'],
   name: 'srmCoreRecords',
   initial: 'draft',
   create: {
@@ -96,6 +127,26 @@ export const coreLifecycle = defineLifecycle<Types>({
     'draft',
     'open',
     'pending',
+    approvalState(
+      'purchasingReview',
+      stage.single({
+        title: 'Purchasing manager',
+        assignee: ({ record }) => decodeCore(record).data.reviewers?.purchasing,
+        onEmpty: 'refuse',
+        qualification: 'operations-approver',
+        actions: reviewActions,
+      }),
+    ),
+    approvalState(
+      'departmentReview',
+      stage.single({
+        title: 'Department manager',
+        assignee: ({ record }) => decodeCore(record).data.reviewers?.department,
+        onEmpty: 'refuse',
+        qualification: 'operations-approver',
+        actions: reviewActions,
+      }),
+    ),
     'submitted',
     'approved',
     'rejected',
@@ -156,13 +207,52 @@ export const coreLifecycle = defineLifecycle<Types>({
     },
     nominate: {
       from: 'open',
-      to: 'pending',
+      to: ['pending', 'purchasingReview'],
+      route: ({ services }) =>
+        services.awardEnabled ? 'purchasingReview' : 'pending',
       guard: eligible(['rfq'], 'nominate'),
       set: async ({ record, input, actor, services, now }) => ({
         submittedBy: actor.id,
         data: JSON.stringify(await services.select(record, input)),
         updatedAt: now.toISOString(),
       }),
+    },
+    purchasingApproved: {
+      from: 'purchasingReview',
+      to: 'departmentReview',
+      approvalOutcome: 'approved',
+      guard: eligible(['rfq'], 'approve'),
+      set: stamp,
+    },
+    departmentApproved: {
+      from: 'departmentReview',
+      to: 'awarded',
+      approvalOutcome: 'approved',
+      guard: eligible(['rfq'], 'approve'),
+      set: ({ record, actor, now }) => ({
+        data: JSON.stringify({
+          ...decodeCore(record).data,
+          approvedBy: actor.id,
+          orderId: record.id,
+        }),
+        updatedAt: now.toISOString(),
+      }),
+      onTransition: ({ record, actor, services }) =>
+        services.approve(record, actor.id),
+    },
+    awardRejected: {
+      from: ['purchasingReview', 'departmentReview'],
+      to: 'rejected',
+      approvalOutcome: 'rejected',
+      guard: eligible(['rfq'], 'reject'),
+      set: stamp,
+    },
+    awardReturned: {
+      from: ['purchasingReview', 'departmentReview'],
+      to: 'open',
+      approvalOutcome: 'returned',
+      guard: eligible(['rfq'], 'reject'),
+      set: stamp,
     },
     approve: {
       from: 'pending',
@@ -255,7 +345,13 @@ export const coreLifecycle = defineLifecycle<Types>({
       set: stamp,
     },
     cancel: {
-      from: ['draft', 'open', 'approved'],
+      from: [
+        'draft',
+        'open',
+        'approved',
+        'purchasingReview',
+        'departmentReview',
+      ],
       to: 'cancelled',
       guard: eligible(['rfq', 'return'], 'cancel'),
       set: ({ record, input, now }) => ({

@@ -108,6 +108,10 @@ export default {
     rejected: 'Rejected quantity',
   },
   actions: {
+    purchasingApproved: 'Purchasing manager approved',
+    departmentApproved: 'Department manager approved',
+    awardRejected: 'Native approval rejected',
+    awardReturned: 'Native approval returned',
     renew: 'Renew qualification',
     post: 'Post stock',
     view: 'View',
@@ -127,6 +131,8 @@ export default {
     cancel: 'Cancel',
   },
   status: {
+    purchasingReview: 'Purchasing manager review',
+    departmentReview: 'Department manager review',
     draft: 'Draft',
     open: 'Open for quotes',
     pending: 'Pending independent approval',

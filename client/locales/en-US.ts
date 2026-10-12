@@ -1,3 +1,6 @@
+import srmApproval from './srm-approval-en-US.js';
+import approvalUiLocale from '../extensions/nocobase-approval-ui/locales/en-US.js';
+import { approvalLocaleEnUS } from '@nocobase/app-plugin-approval/client';
 import srmAi from './srm-ai-en-US.js';
 import core from './core-en-US.js';
 import srm from './srm-en-US.js';
@@ -15,6 +18,9 @@ const enUS = {
   srm,
   core,
   srmAi,
+  srmApproval,
+  ...approvalUiLocale,
+  ...approvalLocaleEnUS,
   showcase,
   // The application's copy goes here, one group per feature. A shared group such as `navigation` is extended by
   // spreading the system one first, `navigation: { ...systemEnUS.navigation, orders: 'Orders' }`, since a group
