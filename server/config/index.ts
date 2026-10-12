@@ -1,3 +1,4 @@
+import financeBridge from './finance-bridge.js';
 import {
   defaultAppConfigs,
   type AppConfigFactory,
@@ -26,6 +27,7 @@ import workflow from './workflow.js';
 import agents from './agents.js';
 
 const defaultConfigs: AppConfigFactory<{
+  financeBridge: ReturnType<typeof financeBridge>;
   auth: ReturnType<typeof auth>;
   authorization: ReturnType<typeof authorization>;
   notification: ReturnType<typeof notification>;
@@ -49,6 +51,7 @@ const defaultConfigs: AppConfigFactory<{
   workflow: ReturnType<typeof workflow>;
   agents: ReturnType<typeof agents>;
 }> = defaultAppConfigs({
+  financeBridge,
   auth,
   authorization,
   notification,

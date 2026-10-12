@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router';
-import { useForm, useFieldArray, Controller } from 'react-hook-form';
+import { useForm, useFieldArray, Controller, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
@@ -42,11 +42,13 @@ export default function DeliveryFormPage() {
       'printTemplates/delivery',
       {},
       !id,
+      true,
     ),
     query = useShowcase<{ data: DeliveryView }>(
       `deliveryPlans/${id}`,
       {},
       !!id,
+      true,
     );
   return (
     <RouteChildPage>
@@ -57,11 +59,11 @@ export default function DeliveryFormPage() {
         {id ? (
           <>
             <State
-              loading={query.isPending}
+              loading={query.isPending || query.isFetching}
               error={query.error}
               retry={() => void query.refetch()}
             />
-            {query.data && (
+            {query.data && !query.error && !query.isFetching && (
               <DeliveryForm
                 key={query.data.data.record.id}
                 record={query.data.data}
@@ -71,11 +73,11 @@ export default function DeliveryFormPage() {
         ) : (
           <>
             <State
-              loading={template.isPending}
+              loading={template.isPending || template.isFetching}
               error={template.error}
               retry={() => void template.refetch()}
             />
-            {template.data && (
+            {template.data && !template.error && !template.isFetching && (
               <DeliveryForm
                 defaultLabelCount={template.data.data.config.labelCount}
               />
@@ -93,16 +95,40 @@ export function DeliveryForm({
   record?: DeliveryView;
   defaultLabelCount?: number;
 }) {
+  const [orderSearch, setOrderSearch] = useState(''),
+    [orderQuery, setOrderQuery] = useState(''),
+    [orderPage, setOrderPage] = useState(1),
+    [pendingOrder, setPendingOrder] = useState('');
   const { t } = useCopy(),
     navigate = useNavigate(),
     location = useLocation(),
     write = useWrite(),
     orders = useShowcase<{
-      data: { id: string; number: string; name: string }[];
-    }>('orders', {}, !record),
+      data: {
+        id: string;
+        number: string;
+        name: string;
+        version: number;
+        sourceLines: {
+          id: string;
+          sku: string;
+          name: string;
+          quantity: number;
+        }[];
+      }[];
+      meta: { total: number };
+    }>(
+      'orders',
+      {
+        q: orderQuery,
+        page: orderPage,
+        ...(record ? { orderId: record.record.orderId } : {}),
+      },
+      true,
+    ),
     r = record?.record;
   const [identity] = useState(() => ({
-    date: new Date().toISOString().slice(0, 10),
+    date: new Date().toLocaleDateString('en-CA'),
     requestId: crypto.randomUUID(),
   }));
   const form = useForm({
@@ -110,26 +136,35 @@ export function DeliveryForm({
       defaultValues: {
         name: r?.name ?? '',
         orderId: r?.orderId ?? '',
-        region: (r?.region ?? 'AU') as 'AU' | 'EU' | 'US' | 'CN',
+        region: (r?.region ?? 'CN') as 'AU' | 'EU' | 'US' | 'CN',
         businessDate: r?.businessDate ?? identity.date,
         notes: r?.notes ?? '',
         labelCount: r?.labelCount ?? defaultLabelCount,
         requestId: identity.requestId,
         expectedVersion: r?.lifecycleVersion,
-        lines: r
-          ? (JSON.parse(r.lines) as DeliveryValues['lines'])
-          : [
-              {
-                sku: '24124.05TP.V2',
-                name: '',
-                fnsku: '1',
-                allocation: 30,
-                unitsPerBox: 6,
-              },
-            ],
+        expectedOrderVersion: r?.orderSourceVersion ?? undefined,
+        lines: r ? (JSON.parse(r.lines) as DeliveryValues['lines']) : [],
       },
     }),
     lines = useFieldArray({ control: form.control, name: 'lines' });
+  const selectedOrderId = useWatch({ control: form.control, name: 'orderId' });
+  function loadOrder(id: string) {
+    const order = orders.data?.data.find((o) => o.id === id);
+    if (!order) return;
+    form.setValue('orderId', id, { shouldDirty: true });
+    form.setValue('expectedOrderVersion', order.version, { shouldDirty: true });
+    lines.replace(
+      order.sourceLines.map((line) => ({
+        sourceLineId: line.id,
+        sku: line.sku,
+        name: line.name,
+        fnsku: '',
+        allocation: Number.isInteger(line.quantity) ? line.quantity : 1,
+        unitsPerBox: 1,
+      })),
+    );
+    setPendingOrder('');
+  }
   const [discard, setDiscard] = useState(false);
   const navigationTargetRef = useRef<string | null>(null),
     allowUnloadRef = useRef(false);
@@ -216,6 +251,13 @@ export function DeliveryForm({
       <State
         loading={!r && orders.isPending}
         error={orders.error}
+        empty={
+          !!r &&
+          !!orders.data &&
+          !orders.isFetching &&
+          !orders.data.data.some((o) => o.id === r.orderId)
+        }
+        emptyLabel={t('srm.sourceUnavailable')}
         retry={() => void orders.refetch()}
       />
       {form.formState.errors.root && (
@@ -245,20 +287,108 @@ export function DeliveryForm({
           <FieldLabel htmlFor='delivery-order'>
             {t('showcase.fields.orderId')} *
           </FieldLabel>
+          <div className='flex flex-wrap gap-2'>
+            <Input
+              placeholder={t('srm.orderSearch')}
+              aria-label={t('srm.orderSearch')}
+              value={orderSearch}
+              onChange={(e) => setOrderSearch(e.target.value)}
+            />
+            <Button
+              type='button'
+              variant='outline'
+              onClick={() => {
+                setOrderQuery(orderSearch);
+                setOrderPage(1);
+              }}
+            >
+              {t('ops.searchButton')}
+            </Button>
+          </div>
           <NativeSelect
             id='delivery-order'
-            disabled={!!r}
-            {...form.register('orderId')}
+            disabled={write.isPending}
+            value={selectedOrderId}
+            onChange={(e) => {
+              if (form.formState.isDirty && form.getValues('lines').length) {
+                setPendingOrder(e.target.value);
+              } else loadOrder(e.target.value);
+            }}
           >
             <NativeSelectOption value=''>
               {t('showcase.chooseOrder')}
             </NativeSelectOption>
-            {orders.data?.data.map((o) => (
-              <NativeSelectOption key={o.id} value={o.id}>
-                {o.number} · {o.name}
+            {r && !orders.data?.data.some((o) => o.id === r.orderId) && (
+              <NativeSelectOption value={r.orderId}>
+                {r.orderNumber ?? r.orderId}
               </NativeSelectOption>
-            ))}
+            )}
+            {orders.data?.data
+              .filter((o) => !r || o.id === r.orderId)
+              .map((o) => (
+                <NativeSelectOption key={o.id} value={o.id}>
+                  {o.number} · {o.name}
+                </NativeSelectOption>
+              ))}
           </NativeSelect>
+          {r && (
+            <Button
+              type='button'
+              variant='outline'
+              disabled={write.isPending || orders.isFetching}
+              onClick={() => {
+                void orders.refetch().then((fresh) => {
+                  if (
+                    !fresh.error &&
+                    fresh.data?.data.some((o) => o.id === r.orderId)
+                  )
+                    setPendingOrder(r.orderId);
+                });
+              }}
+            >
+              {t('srm.reloadSource')}
+            </Button>
+          )}
+          <div className='flex gap-2'>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={orderPage === 1}
+              onClick={() => setOrderPage(orderPage - 1)}
+            >
+              {t('srm.previous')}
+            </Button>
+            <Button
+              type='button'
+              variant='outline'
+              disabled={orderPage * 20 >= (orders.data?.meta?.total ?? 0)}
+              onClick={() => setOrderPage(orderPage + 1)}
+            >
+              {t('srm.next')}
+            </Button>
+          </div>
+          {pendingOrder && (
+            <div className='flex flex-wrap gap-2'>
+              <p>{t('srm.discard')}</p>
+              <Button
+                type='button'
+                disabled={
+                  orders.isFetching ||
+                  !orders.data?.data.some((o) => o.id === pendingOrder)
+                }
+                onClick={() => loadOrder(pendingOrder)}
+              >
+                {t('srm.loadLatest')}
+              </Button>
+              <Button
+                type='button'
+                variant='outline'
+                onClick={() => setPendingOrder('')}
+              >
+                {t('srm.cancel')}
+              </Button>
+            </div>
+          )}
           <FieldError
             errors={
               form.formState.errors.orderId
@@ -321,7 +451,7 @@ export function DeliveryForm({
                       ? 'showcase.productName'
                       : `showcase.fields.${key}`,
                   )}{' '}
-                  *
+                  {key === 'fnsku' ? '' : '*'}
                 </FieldLabel>
                 <Input
                   id={`line-${index}-${key}`}
@@ -354,23 +484,6 @@ export function DeliveryForm({
             )}
           </div>
         ))}
-        <Button
-          className='self-start'
-          type='button'
-          variant='outline'
-          disabled={lines.fields.length >= 100}
-          onClick={() =>
-            lines.append({
-              sku: '',
-              name: '',
-              fnsku: '',
-              allocation: 1,
-              unitsPerBox: 1,
-            })
-          }
-        >
-          {t('showcase.addLine')}
-        </Button>
       </section>
       <Field>
         <FieldLabel htmlFor='delivery-labels'>

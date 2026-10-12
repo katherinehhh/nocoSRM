@@ -1,6 +1,7 @@
 node_modules/
 dist/
 coverage/
+output/
 
 # Local configuration, including the generated secrets key.
 /config.yml

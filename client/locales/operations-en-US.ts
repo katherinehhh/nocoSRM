@@ -5,13 +5,13 @@ export default {
   clear: 'Clear filters',
   dashboard: 'Operations overview',
   dashboardDescription:
-    'Track manufacturing procurement from demand to settlement.',
+    'Track purchasing, deliveries and stock; open the separate workspace for finance.',
   supply: 'Supply chain ERP',
   finance: 'Finance',
   automation: 'Policies and automation',
   portal: 'Supplier portal',
   portalDescription:
-    'Confirm orders, register shipments and invoices, and reconcile settlements.',
+    'Confirm purchase orders and register shipments for supply-chain collaboration.',
   settings: 'Business settings',
   settingsDescription:
     'Organization, matching tolerance and automation window.',
@@ -76,6 +76,7 @@ export default {
     tasks: 'Business tasks',
   },
   fields: {
+    expectedDeliveryDate: 'Promised delivery date',
     number: 'Document number',
     name: 'Name',
     status: 'Status',
@@ -161,6 +162,7 @@ export default {
     fail: 'Execution failed',
   },
   status: {
+    candidate: 'Awaiting admission',
     draft: 'Draft',
     pending: 'Pending',
     approved: 'Approved',
@@ -188,6 +190,11 @@ export default {
     preview: 'Preview',
   },
   errors: {
+    SOURCE_CHANGED:
+      'The source or approved quotation changed. Review it again.',
+    SUPPLIER_UNQUALIFIED: 'The supplier needs a valid approved admission.',
+    INSPECTION_REQUIRED:
+      'Complete receipt inspection approval; edited receipts require a new inspection.',
     FORBIDDEN: 'You do not have permission for this action.',
     NOT_FOUND: 'The record was not found or is not accessible.',
     REQUIRED: 'Complete the required fields and line items.',

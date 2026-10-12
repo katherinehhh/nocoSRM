@@ -5,6 +5,8 @@ import { PageHeader } from '#components/page-header';
 import { useCopy, useData, money, paths } from './common.js';
 import { State, Status } from './states.js';
 
+import { isSrmResource } from '../../lib/srm-scope.js';
+import { FinanceAppLink } from '#components/finance-app-link';
 import { type Doc, type Kind } from '../../../shared/operations.js';
 interface Summary {
   cards: { kind: Kind; count: number; amount: number }[];
@@ -22,6 +24,7 @@ export default function Dashboard() {
         <PageHeader
           title={t('ops.dashboard')}
           description={t('ops.dashboardDescription')}
+          actions={<FinanceAppLink />}
         />
         <State
           loading={query.isPending}
@@ -31,27 +34,29 @@ export default function Dashboard() {
         {query.data && (
           <>
             <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
-              {query.data.data.cards.map((c, i) => {
-                const Icon = icons[i % icons.length];
-                return (
-                  <Link
-                    key={c.kind}
-                    className='rounded-xl border bg-card p-5 transition-colors hover:bg-muted/50'
-                    to={paths[c.kind]}
-                  >
-                    <div className='flex justify-between text-sm text-muted-foreground'>
-                      <span>{t(`ops.kinds.${c.kind}`)}</span>
-                      <Icon className='size-5' />
-                    </div>
-                    <p className='mt-5 text-3xl font-semibold tabular-nums'>
-                      {c.count}
-                    </p>
-                    <p className='mt-2 text-sm text-muted-foreground'>
-                      {money(c.amount, i18n.language)}
-                    </p>
-                  </Link>
-                );
-              })}
+              {query.data.data.cards
+                .filter((c) => isSrmResource(c.kind))
+                .map((c, i) => {
+                  const Icon = icons[i % icons.length];
+                  return (
+                    <Link
+                      key={c.kind}
+                      className='rounded-xl border bg-card p-5 transition-colors hover:bg-muted/50'
+                      to={paths[c.kind]}
+                    >
+                      <div className='flex justify-between text-sm text-muted-foreground'>
+                        <span>{t(`ops.kinds.${c.kind}`)}</span>
+                        <Icon className='size-5' />
+                      </div>
+                      <p className='mt-5 text-3xl font-semibold tabular-nums'>
+                        {c.count}
+                      </p>
+                      <p className='mt-2 text-sm text-muted-foreground'>
+                        {money(c.amount, i18n.language)}
+                      </p>
+                    </Link>
+                  );
+                })}
             </div>
             <div className='grid gap-6 xl:grid-cols-2'>
               <section className='rounded-xl border p-6'>

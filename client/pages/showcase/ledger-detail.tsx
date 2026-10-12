@@ -3,6 +3,13 @@ import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
 import { RouteChildPage } from '#components/route-child-page';
 import { BackButton } from '#components/back-button';
+import { FinanceAppLink } from '#components/finance-app-link';
+import {
+  Empty,
+  EmptyHeader,
+  EmptyTitle,
+  EmptyDescription,
+} from '#components/ui/empty';
 import { Button } from '#components/ui/button';
 import {
   Card,
@@ -69,6 +76,23 @@ export default function LedgerDetail() {
                     {t('showcase.resolve')}
                   </Button>
                 )}{' '}
+                {caps.data?.data.actions.includes('sync') && (
+                  <Button
+                    nativeButton={false}
+                    variant='outline'
+                    render={
+                      <Link
+                        to={{
+                          pathname: 'acknowledgment',
+                          search: location.search,
+                        }}
+                      />
+                    }
+                  >
+                    {t('srm.ack')}
+                  </Button>
+                )}
+                <FinanceAppLink />
                 <Refresh
                   pending={q.isFetching || caps.isFetching}
                   onClick={() => {
@@ -85,6 +109,105 @@ export default function LedgerDetail() {
             retry={() => void q.refetch()}
           />
           {r && (
+            <Card>
+              <CardHeader>
+                <CardTitle>{t('srm.financeBridge')}</CardTitle>
+                <CardDescription>
+                  {t('srm.financeBridgeNotice')}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className='flex flex-col gap-3'>
+                {!r.financeBridgeEnabled ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>{t('srm.financeUnconfigured')}</EmptyTitle>
+                      <EmptyDescription>
+                        {t('srm.financeConfigureHint')}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : !r.finance?.length ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>{t('srm.financeWaiting')}</EmptyTitle>
+                      <EmptyDescription>
+                        {t('srm.financeWaitingHint')}
+                      </EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
+                ) : (
+                  r.finance.map((item) => (
+                    <div
+                      key={item.id}
+                      className='flex flex-col gap-3 rounded-lg border p-4'
+                    >
+                      <span className='text-sm text-muted-foreground'>
+                        {item.receiptNo} · {t('srm.financeLine')}:{' '}
+                        {item.receiptLineId} · {t('srm.financeSyncTime')}:{' '}
+                        {new Date(item.updatedAt).toLocaleString(i18n.language)}
+                      </span>
+                      <span>
+                        {t(
+                          item.state === 'excluded'
+                            ? 'srm.financeExcluded'
+                            : item.state === 'failed'
+                              ? item.error === 'SOURCE_UNSUPPORTED'
+                                ? 'srm.financeUnsupported'
+                                : 'srm.financeFailed'
+                              : item.result?.status === 'posted'
+                                ? 'srm.financePosted'
+                                : item.state === 'synced'
+                                  ? 'srm.financeSynced'
+                                  : 'srm.financeWaiting',
+                        )}
+                      </span>
+                      {item.original && (
+                        <span>
+                          {t('srm.financeOriginal')}: {t('srm.financeNet')}:{' '}
+                          {money(item.original.netAmount, i18n.language)} ·{' '}
+                          {t('srm.financeTax')}:{' '}
+                          {money(item.original.taxAmount, i18n.language)} ·{' '}
+                          {t('srm.financeGross')}:{' '}
+                          {money(item.original.grossAmount, i18n.language)}
+                        </span>
+                      )}
+                      {item.result && item.result.status !== 'draft' ? (
+                        <span>
+                          {t('srm.financeSettlement')}: {t('srm.financeNet')}:{' '}
+                          {money(item.result.netAmount, i18n.language)} ·{' '}
+                          {t('srm.financeTax')}:{' '}
+                          {money(item.result.taxAmount, i18n.language)} ·{' '}
+                          {t('srm.financeGross')}:{' '}
+                          {money(item.result.grossAmount, i18n.language)} ·{' '}
+                          {t('srm.financeStatus')}:{' '}
+                          {t(`srm.financeState_${item.result.status}`)}
+                        </span>
+                      ) : item.state === 'excluded' ? null : (
+                        <span>{t('srm.financeUnreconciled')}</span>
+                      )}
+                      {item.stale && <span>{t('srm.financeStale')}</span>}
+                      {item.url && (
+                        <Button
+                          variant='outline'
+                          nativeButton={false}
+                          render={
+                            <a
+                              href={item.url}
+                              target='_blank'
+                              rel='noopener noreferrer'
+                            />
+                          }
+                        >
+                          {t('srm.financeBill')}
+                        </Button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </CardContent>
+            </Card>
+          )}
+          {r && (
             <>
               <Card>
                 <CardHeader>
@@ -92,7 +215,8 @@ export default function LedgerDetail() {
                     <Status value={r.disposition} />
                   </CardTitle>
                   <CardDescription>
-                    {t('showcase.ledgerDescription')}
+                    {t('showcase.ledgerDescription')}{' '}
+                    {t('showcase.financeBoundary')}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className='grid gap-4 sm:grid-cols-2'>
@@ -101,16 +225,27 @@ export default function LedgerDetail() {
                       'localAmount',
                       'externalAmount',
                       'difference',
-                      'invoiceAmount',
-                      'registeredPayments',
+                      'localQuantity',
+                      'externalQuantity',
+                      'quantityDifference',
                     ] as const
                   ).map((key) => (
                     <div key={key}>
                       <p className='text-sm text-muted-foreground'>
-                        {t(`showcase.${key}`)}
+                        {t(
+                          key.includes('Quantity') ||
+                            key === 'quantityDifference'
+                            ? `srm.${key}`
+                            : `showcase.${key}`,
+                        )}
                       </p>
                       <p className='mt-1 text-base tabular-nums'>
-                        {r[key] === null ? '—' : money(r[key], i18n.language)}
+                        {r[key] === null
+                          ? '—'
+                          : key.includes('Quantity') ||
+                              key === 'quantityDifference'
+                            ? Number(r[key]).toLocaleString(i18n.language)
+                            : money(r[key], i18n.language)}
                       </p>
                     </div>
                   ))}
@@ -122,6 +257,17 @@ export default function LedgerDetail() {
                   </div>
                 </CardContent>
               </Card>
+              {!r.provenance && (
+                <p>{t(r.legacyEvidence ? 'srm.legacy' : 'srm.noEvidence')}</p>
+              )}
+              {r.provenance && (
+                <p>
+                  {t(`srm.${r.provenance}`)} · {r.externalReference} ·{' '}
+                  {r.recordedAt
+                    ? new Date(r.recordedAt).toLocaleString(i18n.language)
+                    : '—'}
+                </p>
+              )}
               <Card>
                 <CardHeader>
                   <CardTitle>{t('showcase.evidence')}</CardTitle>

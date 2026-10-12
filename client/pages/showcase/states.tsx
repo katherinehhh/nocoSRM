@@ -57,6 +57,7 @@ export function State({
   retry,
   emptyLabel,
   emptyAction,
+  emptyDescription,
   clear,
 }: {
   loading?: boolean;
@@ -65,6 +66,7 @@ export function State({
   retry?: () => void;
   emptyLabel?: string;
   emptyAction?: ReactNode;
+  emptyDescription?: string;
   clear?: () => void;
 }) {
   const { t } = useCopy();
@@ -86,7 +88,12 @@ export function State({
     );
   if (error) {
     const code = failure(error);
-    const status = error instanceof ApiClientError ? error.status : 0;
+    const status =
+      error instanceof ApiClientError
+        ? error.status
+        : error instanceof Error && 'status' in error
+          ? Number(error.status)
+          : 0;
     const permanent =
       [401, 403, 404].includes(status) ||
       ['FORBIDDEN', 'NOT_FOUND', 'UNAUTHENTICATED'].includes(code);
@@ -139,9 +146,10 @@ export function State({
         </EmptyMedia>
         <EmptyTitle>{emptyLabel ?? t('showcase.emptyTitle')}</EmptyTitle>
         <EmptyDescription>
-          {emptyLabel
-            ? t('showcase.noResults')
-            : t('showcase.emptyDescription')}
+          {emptyDescription ??
+            (emptyLabel
+              ? t('showcase.noResults')
+              : t('showcase.emptyDescription'))}
         </EmptyDescription>
       </EmptyHeader>
       <EmptyContent>

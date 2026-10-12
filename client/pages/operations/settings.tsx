@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import WorkflowSettings from './workflow-settings.js';
 import { useApiClient, useToaster } from '@nocobase/app-client';
 import { useQueryClient } from '@tanstack/react-query';
 import { PageContainer } from '#components/page-container';
@@ -18,29 +19,7 @@ export default function Settings() {
         payload: Record<string, string | number>;
       }[];
     }>('settings'),
-    caps = useCapabilities(),
-    api = useApiClient(),
-    cache = useQueryClient();
-  const [password, setPassword] = useState(''),
-    [pending, setPending] = useState(false),
-    [error, setError] = useState(''),
-    [accounts, setAccounts] = useState<{ role: string; email: string }[]>([]);
-  async function demo() {
-    setPending(true);
-    setError('');
-    try {
-      const result = await api.request<{
-        data: { accounts: { role: string; email: string }[] };
-      }>({ path: 'operations/demo', method: 'POST', json: { password } });
-      setAccounts(result.data.accounts);
-      setPassword('');
-      await cache.invalidateQueries({ queryKey: ['operations'] });
-    } catch (e) {
-      setError(failure(e));
-    } finally {
-      setPending(false);
-    }
-  }
+    caps = useCapabilities();
   return (
     <PageContainer>
       <PageHeader
@@ -53,7 +32,7 @@ export default function Settings() {
         retry={() => void query.refetch()}
       />
       {query.data &&
-        ['organization', 'finance', 'automation'].map((section) => {
+        ['organization', 'automation'].map((section) => {
           const row = query.data.data.find((r) => r.id === section);
           return (
             <SettingsSection
@@ -64,48 +43,7 @@ export default function Settings() {
             />
           );
         })}
-      {caps.data?.data.admin && (
-        <section className='space-y-4 rounded-xl border p-6'>
-          <h2 className='text-lg font-semibold'>{t('ops.demo')}</h2>
-          <p className='text-sm text-muted-foreground'>
-            {t('ops.demoDescription')}
-          </p>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void demo();
-            }}
-            className='flex flex-wrap gap-3'
-          >
-            <Input
-              className='max-w-sm'
-              required
-              minLength={12}
-              type='password'
-              autoComplete='new-password'
-              aria-label={t('ops.demoPassword')}
-              placeholder={t('ops.demoPassword')}
-              value={password}
-              disabled={pending}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-            <Button type='submit' disabled={pending}>
-              {t(pending ? 'ops.saving' : 'ops.loadDemo')}
-            </Button>
-          </form>
-          {error && (
-            <p role='alert' className='text-destructive'>
-              {t(`ops.errors.${error}`, { defaultValue: t('ops.error') })}
-            </p>
-          )}
-          {accounts.map((a) => (
-            <div className='flex gap-4 text-sm' key={a.role}>
-              <span>{t(`ops.roles.${a.role}`)}</span>
-              <span>{a.email}</span>
-            </div>
-          ))}
-        </section>
-      )}
+      <WorkflowSettings />
     </PageContainer>
   );
 }
@@ -124,7 +62,7 @@ function SettingsSection({
     toast = useToaster();
   const fields: Record<string, [string, string | number][]> = {
     organization: [
-      ['name', '制造供应链演示'],
+      ['name', ''],
       ['terms', 30],
     ],
     finance: [['tolerance', 0]],

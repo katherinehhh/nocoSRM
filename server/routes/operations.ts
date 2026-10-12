@@ -1,10 +1,10 @@
+import { businessMembership } from '../services/business-membership.js';
 import type { Application } from '@nocobase/app-server/application';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import {
   authenticationToken,
   type AuthEnv,
-  userAdministrationServiceToken,
 } from '@nocobase/app-plugin-authentication';
 import {
   authorizationToken,
@@ -29,7 +29,6 @@ import {
   type Kind,
   type Doc,
 } from '../../shared/operations.js';
-import { createDemo } from '../providers/operations/demo.js';
 const Output = z.object({ id: z.string() }).passthrough();
 const LineSchema = z
   .object({
@@ -49,6 +48,7 @@ const Field = z
     lines: z.array(LineSchema).max(100).optional(),
     sourceId: z.string().optional(),
     orderId: z.string().optional(),
+    expectedDeliveryDate: z.string().optional(),
     receiptId: z.string().optional(),
     invoiceId: z.string().optional(),
     settlementId: z.string().optional(),
@@ -157,15 +157,13 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
     if (decision.effect === 'deny' || !decision.conditions?.database)
       throw new BusinessError('FORBIDDEN');
     const user = c.get('auth')!.user;
-    const member = await service.db
-      .repository<{
-        userId: string;
-        organizationId: string;
-        supplierId: string | null;
-      }>('opsMemberships')
-      .findOne({ filter: { userId: user.id } });
-    const unrestricted = (await c.get('authz').snapshot()).unrestricted;
-    if (!member && !unrestricted) throw new BusinessError('FORBIDDEN');
+    const member = await businessMembership(
+      service.db,
+      app.container,
+      user.id,
+      (await c.get('authz').snapshot()).unrestricted,
+    );
+    if (!member) throw new BusinessError('FORBIDDEN');
     if (member?.supplierId && !portalKinds.includes(kind))
       throw new BusinessError('FORBIDDEN');
     return {
@@ -199,11 +197,13 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
           permissions[kind].push(action);
     }
     const user = c.get('auth')!.user;
-    const member = await service.db
-      .repository<{ userId: string; supplierId: string | null }>(
-        'opsMemberships',
-      )
-      .findOne({ filter: { userId: user.id } });
+    const member = await businessMembership(
+      service.db,
+      app.container,
+      user.id,
+      (await c.get('authz').snapshot()).unrestricted,
+    );
+    if (!member) for (const kind of kinds) permissions[kind] = [];
     return c.json({
       data: {
         permissions,
@@ -215,25 +215,17 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
       },
     });
   });
-  router.post(
-    '/demo',
-    description('CreateDemo'),
-    apiValidator('json', z.object({ password: z.string().min(12).max(100) })),
-    async (c) => {
-      await c.get('authz').require({
-        resource: { type: 'settings', id: 'operations.admin' },
-        action: 'update',
-      });
-      if (process.env.NODE_ENV === 'production')
-        throw new BusinessError('FORBIDDEN');
-      const result = await createDemo(
-        service,
-        authz,
-        app.container.resolve(userAdministrationServiceToken),
-        c.req.valid('json').password,
-      );
-      return c.json({ data: result });
-    },
+  router.post('/demo', description('DemonstrationDisabled'), async (c) =>
+    c.json(
+      {
+        error: {
+          code: 410,
+          reason: 'DEMO_DISABLED',
+          message: 'Demonstration operations are disabled.',
+        },
+      },
+      410,
+    ),
   );
   router.get('/settings', description('ReadSettings'), async (c) => {
     await c.get('authz').require({
@@ -350,6 +342,34 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
           k === 'suppliers' && a.supplierId ? { id: a.supplierId } : {},
         );
       }
+      if (['receipts', 'dispatches'].includes(c.req.valid('param').kind)) {
+        const posted = (data.receipts as Doc[]).filter(
+          (r) => r.status === 'posted',
+        );
+        data.orders = (data.orders as Doc[])
+          .filter((o) => ['confirmed', 'partial'].includes(o.status))
+          .map((o) => ({
+            ...o,
+            payload: {
+              ...o.payload,
+              lines: o.payload.lines
+                ?.map((line) => ({
+                  ...line,
+                  quantity: Math.max(
+                    0,
+                    line.quantity -
+                      posted
+                        .filter((r) => r.payload.orderId === o.id)
+                        .flatMap((r) => r.payload.lines ?? [])
+                        .filter((l) => l.sourceLineId === line.id)
+                        .reduce((n, l) => n + (l.accepted ?? l.quantity), 0),
+                  ),
+                }))
+                .filter((l) => l.quantity > 0),
+            },
+          }))
+          .filter((o) => o.payload.lines?.length);
+      }
       return c.json({ data });
     },
   );
@@ -359,7 +379,14 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
       action: 'access',
     });
     const cards = [];
-    for (const kind of ['plans', 'orders', 'payments', 'runs'] as Kind[]) {
+    for (const kind of ['plans', 'orders', 'receipts', 'runs'] as Kind[]) {
+      if (
+        !(await c.get('authz').can({
+          resource: { type: 'composite', id: `operations.${kind}` },
+          action: 'view',
+        }))
+      )
+        continue;
       const a = await actor(c, kind, 'view'),
         docs = await service.all(service.db.connection(), a, kind);
       cards.push({
@@ -368,25 +395,61 @@ export const operationsRoutes = defineApiRoutes((app: Application) => {
         amount: docs.reduce((v, d) => v + d.amount, 0),
       });
     }
-    const tasks = (
-      await service.list(await actor(c, 'tasks', 'view'), 'tasks', {
-        status: 'open',
-        pageSize: '6',
-      })
-    ).data;
-    const recent = (
-      await service.list(await actor(c, 'orders', 'view'), 'orders', {
-        pageSize: '6',
-      })
-    ).data;
-    const stock = (await service.stock(await actor(c, 'materials', 'view')))
-      .slice(0, 6)
-      .map((m) => ({
-        name: m.name,
-        stock: m.stock,
-        threshold: m.payload.reorderPoint ?? 0,
-      }));
-    return c.json({ data: { cards, tasks, recent, stock } });
+    const tasks = (await c.get('authz').can({
+      resource: { type: 'composite', id: 'operations.tasks' },
+      action: 'view',
+    }))
+      ? (
+          await service.list(await actor(c, 'tasks', 'view'), 'tasks', {
+            status: 'open',
+            pageSize: '6',
+          })
+        ).data
+      : [];
+    const recent = (await c.get('authz').can({
+      resource: { type: 'composite', id: 'operations.orders' },
+      action: 'view',
+    }))
+      ? (
+          await service.list(await actor(c, 'orders', 'view'), 'orders', {
+            pageSize: '6',
+          })
+        ).data
+      : [];
+    const stock = (await c.get('authz').can({
+      resource: { type: 'composite', id: 'operations.materials' },
+      action: 'view',
+    }))
+      ? (await service.stock(await actor(c, 'materials', 'view')))
+          .slice(0, 6)
+          .map((m) => ({
+            name: m.name,
+            stock: m.stock,
+            threshold: m.payload.reorderPoint ?? 0,
+          }))
+      : [];
+    return c.json({
+      data: {
+        cards,
+        tasks,
+        recent,
+        stock,
+        availability: {
+          tasks: await c.get('authz').can({
+            resource: { type: 'composite', id: 'operations.tasks' },
+            action: 'view',
+          }),
+          orders: await c.get('authz').can({
+            resource: { type: 'composite', id: 'operations.orders' },
+            action: 'view',
+          }),
+          materials: await c.get('authz').can({
+            resource: { type: 'composite', id: 'operations.materials' },
+            action: 'view',
+          }),
+        },
+      },
+    });
   });
   router.get('/stock', description('Stock'), async (c) =>
     c.json({ data: await service.stock(await actor(c, 'materials', 'view')) }),

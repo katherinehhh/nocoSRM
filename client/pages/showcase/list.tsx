@@ -12,6 +12,7 @@ import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
 import { DataTable } from '#components/data-table';
 import { Input } from '#components/ui/input';
+import { FinanceAppLink } from '#components/finance-app-link';
 import { Button } from '#components/ui/button';
 import { NativeSelect, NativeSelectOption } from '#components/ui/native-select';
 import { State, Status, Refresh } from './states.js';
@@ -143,6 +144,19 @@ export default function ShowcaseList() {
     },
     ...(ledger
       ? ([
+          ...['localQuantity', 'externalQuantity', 'quantityDifference'].map(
+            (key) => ({
+              accessorKey: key,
+              header: t(`srm.${key}`),
+              cell: ({ getValue }: { getValue: () => unknown }) => (
+                <span className='block text-right tabular-nums'>
+                  {getValue() === null
+                    ? '—'
+                    : Number(getValue()).toLocaleString(i18n.language)}
+                </span>
+              ),
+            }),
+          ),
           {
             accessorKey: 'externalAmount',
             header: t('showcase.externalAmount'),
@@ -255,6 +269,7 @@ export default function ShowcaseList() {
                     {t('ops.create')}
                   </Button>
                 )}
+              {ledger && <FinanceAppLink />}
               <Refresh
                 pending={query.isFetching || overview.isFetching}
                 onClick={() => {
@@ -265,6 +280,11 @@ export default function ShowcaseList() {
             </>
           }
         />
+        {ledger && (
+          <p className='text-sm text-muted-foreground'>
+            {t('showcase.financeBoundary')}
+          </p>
+        )}
         <form
           className='flex flex-wrap gap-3'
           onSubmit={(e) => {

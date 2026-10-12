@@ -55,6 +55,12 @@ export default function Detail() {
             title={r?.name ?? t('showcase.deliveryPlans')}
             actions={
               <>
+                <p className='text-sm text-muted-foreground'>
+                  {t('srm.receiptsNotice')}
+                </p>
+                <p className='text-sm text-muted-foreground'>
+                  {t('srm.outboundNotice')}
+                </p>
                 {r && caps.data?.data.actions.includes('print') && (
                   <Button
                     nativeButton={false}
@@ -109,11 +115,13 @@ export default function Detail() {
                         }
                       >
                         {write.isPending && <Spinner />}
-                        {t(`ops.actions.${action.name}`, {
-                          defaultValue: t(
-                            `showcase.actionsCopy.${action.name}`,
-                          ),
-                        })}
+                        {r.status === 'pending' && action.name === 'submit'
+                          ? t('srm.retryWorkflow')
+                          : t(`ops.actions.${action.name}`, {
+                              defaultValue: t(
+                                `showcase.actionsCopy.${action.name}`,
+                              ),
+                            })}
                       </Button>
                     ))}
                     {r.status === 'draft' &&

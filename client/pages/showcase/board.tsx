@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Input } from '#components/ui/input';
-import { Link, Outlet, useLocation } from 'react-router';
+import { Link, Outlet, useLocation, useSearchParams } from 'react-router';
 import { PageContainer } from '#components/page-container';
 import { PageHeader } from '#components/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '#components/ui/card';
@@ -9,11 +9,30 @@ import { money } from '../operations/common.js';
 import { deliveryStates, type Delivery } from '../../../shared/showcase.js';
 import { useCopy, useShowcase } from './common.js';
 export default function Board() {
-  const [search, setSearch] = useState('');
+  const [params, setParams] = useSearchParams(),
+    committed = params.get('q') ?? '',
+    [search, setSearch] = useState(committed),
+    [previous, setPrevious] = useState(committed),
+    [composing, setComposing] = useState(false);
+  if (previous !== committed && !composing) {
+    setPrevious(committed);
+    setSearch(committed);
+  }
+  useEffect(() => {
+    if (composing || search === committed) return;
+    const timer = setTimeout(() => {
+      const next = new URLSearchParams(params);
+      if (search) next.set('q', search);
+      else next.delete('q');
+      setParams(next, { replace: true });
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search, composing, committed, params, setParams]);
   const { t, i18n } = useCopy(),
     location = useLocation(),
     query = useShowcase<{ data: Delivery[]; meta: { cap: number } }>(
       'workBoard',
+      { q: committed },
     );
   const rows =
     query.data?.data.filter((r) =>
@@ -41,6 +60,8 @@ export default function Board() {
           placeholder={t('ops.search')}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          onCompositionStart={() => setComposing(true)}
+          onCompositionEnd={() => setComposing(false)}
         />
         <State
           loading={query.isPending}

@@ -1,174 +1,90 @@
-import {
-  TestI18nProvider,
-  createTestI18nRuntime,
-} from '@nocobase/i18n/testing';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import type { ReactElement, ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-import enUS from '../../client/locales/en-US.js';
-import zhCN from '../../client/locales/zh-CN.js';
-import HomePage from '../../client/pages/home/index.js';
-import { CAPABILITIES } from '../../client/pages/home/capabilities.js';
-
-const { toaster } = vi.hoisted(() => ({
-  toaster: { show: vi.fn(), close: vi.fn() },
+import { render, screen, cleanup } from '@testing-library/react';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { MemoryRouter } from 'react-router';
+import { I18nRuntime } from '@nocobase/i18n';
+import { I18nProvider } from '@nocobase/i18n/client';
+import locales from '../../client/locales/index.js';
+import Workspace from '../../client/pages/home/index.js';
+const { access } = vi.hoisted(() => ({ access: { allowed: true } }));
+vi.mock('@nocobase/app-plugin-authorization/client', () => ({
+  useCan: () => ({ can: access.allowed, isPending: false }),
 }));
-
-vi.mock('@nocobase/app-client', async (original) => ({
-  ...(await original<typeof import('@nocobase/app-client')>()),
-  useToaster: () => toaster,
+vi.mock('../../client/pages/operations/common.js', async (original) => ({
+  ...(await original<
+    typeof import('../../client/pages/operations/common.js')
+  >()),
+  useData: () => ({
+    isPending: false,
+    isFetching: false,
+    data: access.allowed
+      ? {
+          data: {
+            cards: [{ kind: 'orders', count: 2 }],
+            tasks: [{ id: 'task-1', name: 'Check delivery', status: 'open' }],
+            recent: [],
+            stock: [],
+          },
+        }
+      : undefined,
+  }),
 }));
-
-// Strict: a key the locale lacks fails the test instead of rendering as text.
-const runtime = await createTestI18nRuntime({
-  application: {
-    namespace: '@nocobase/app-template-default',
-    resources: enUS,
-  },
-});
-
-function I18n({ children }: { readonly children: ReactNode }): ReactElement {
-  return <TestI18nProvider runtime={runtime}>{children}</TestI18nProvider>;
+vi.mock('../../client/pages/showcase/common.js', async (original) => ({
+  ...(await original<typeof import('../../client/pages/showcase/common.js')>()),
+  useShowcase: () => ({
+    isPending: false,
+    isFetching: false,
+    data: access.allowed ? { data: { pending: 1 } } : undefined,
+  }),
+}));
+afterEach(cleanup);
+async function setup(language = 'zh-CN') {
+  const runtime = new I18nRuntime({
+    defaultLocale: language,
+    locales: ['zh-CN', 'en-US'],
+    applicationNamespace: 'app',
+  });
+  runtime.registerApplicationNamespace('app', locales);
+  await runtime.init(language);
+  render(
+    <I18nProvider runtime={runtime}>
+      <MemoryRouter>
+        <Workspace />
+      </MemoryRouter>
+    </I18nProvider>,
+  );
 }
-
-const writeText = vi.fn<(text: string) => Promise<void>>();
-const clipboard = { fail: false };
-
-/** `userEvent.setup()` installs a clipboard stub of its own, so the mock goes in after it. */
-function setup(): ReturnType<typeof userEvent.setup> {
-  const user = userEvent.setup();
-  writeText
-    .mockReset()
-    .mockImplementation(() =>
-      clipboard.fail ? Promise.reject(new Error('denied')) : Promise.resolve(),
-    );
-  Object.defineProperty(navigator, 'clipboard', {
-    configurable: true,
-    value: { writeText },
-  });
-  return user;
-}
-
-describe('home page', () => {
-  beforeEach(() => {
-    toaster.show.mockReset();
-    clipboard.fail = false;
-  });
-
-  it('tells people to build by asking their coding agent', () => {
-    render(<HomePage />, { wrapper: I18n });
-
-    expect(
-      screen.getByRole('heading', { level: 1, name: enUS.home.title }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(enUS.home.steps.describe.title)).toBeVisible();
-  });
-
-  it('shows one card per built-in capability', () => {
-    render(<HomePage />, { wrapper: I18n });
-
-    for (const { id } of CAPABILITIES) {
-      const title =
-        enUS.home.capabilities[id as keyof typeof enUS.home.capabilities].title;
+describe('SRM workspace', () => {
+  it.each(['zh-CN', 'en-US'])(
+    'shows operational tasks and contextual links without developer or demo prompts (%s)',
+    async (language) => {
+      access.allowed = true;
+      await setup(language);
       expect(
-        screen.getByRole('button', { name: new RegExp(title) }),
+        screen.getByRole('heading', {
+          level: 1,
+          name: language === 'zh-CN' ? 'SRM 工作台' : 'SRM workspace',
+        }),
       ).toBeInTheDocument();
-    }
-  });
-
-  it('opens a capability, switches prompts, and copies the edited text', async () => {
-    const user = setup();
-    render(<HomePage />, { wrapper: I18n });
-    const scheduler = enUS.home.capabilities.scheduler;
-
-    await user.click(
-      screen.getByRole('button', { name: new RegExp(scheduler.title) }),
-    );
-    const dialog = await screen.findByRole('dialog');
-    const prompt = within(dialog).getByRole('textbox', {
-      name: enUS.home.prompt.label,
-    });
-    expect(prompt).toHaveValue(scheduler.prompts.reminder.text);
-
-    await user.click(
-      within(dialog).getByRole('tab', {
-        name: scheduler.prompts.weeklyReport.label,
-      }),
-    );
-    expect(prompt).toHaveValue(scheduler.prompts.weeklyReport.text);
-
-    await user.clear(prompt);
-    await user.type(prompt, 'Every Friday');
-    await user.click(
-      within(dialog).getByRole('button', { name: enUS.home.prompt.copy }),
-    );
-
-    expect(writeText).toHaveBeenCalledWith('Every Friday');
-    expect(toaster.show).toHaveBeenCalledWith({
-      type: 'success',
-      title: enUS.home.prompt.copied,
-    });
-
-    await user.click(
-      within(dialog).getByRole('button', { name: enUS.home.prompt.reset }),
-    );
-    expect(prompt).toHaveValue(scheduler.prompts.weeklyReport.text);
-  });
-
-  it('starts from the default prompt each time the dialog opens', async () => {
-    const user = setup();
-    render(<HomePage />, { wrapper: I18n });
-    const theme = enUS.home.capabilities.theme;
-    const card = screen.getByRole('button', { name: new RegExp(theme.title) });
-
-    await user.click(card);
-    const prompt = within(await screen.findByRole('dialog')).getByRole(
-      'textbox',
-    );
-    await user.type(prompt, ' Edited.');
-    await user.keyboard('{Escape}');
-    await waitFor(() =>
-      expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
-    );
-
-    await user.click(card);
+      expect(
+        screen.getByRole('link', { name: /Check delivery/ }),
+      ).toHaveAttribute('href', '/records/tasks/task-1');
+      expect(
+        screen.queryByText(/Create demonstration scenario|创建新演示场景/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/Describe.*build.*review/i),
+      ).not.toBeInTheDocument();
+    },
+  );
+  it('keeps an unbound user on a usable landing page without business data or links', async () => {
+    access.allowed = false;
+    await setup();
     expect(
-      within(await screen.findByRole('dialog')).getByRole('textbox'),
-    ).toHaveValue(theme.prompts.changeTheme.text);
-  });
-
-  it('reports a copy the browser refuses', async () => {
-    clipboard.fail = true;
-    const user = setup();
-    render(<HomePage />, { wrapper: I18n });
-
-    await user.click(
-      screen.getAllByRole('button', { name: enUS.home.prompt.copy })[0],
-    );
-
-    expect(toaster.show).toHaveBeenCalledWith({
-      type: 'error',
-      title: enUS.home.prompt.copyFailed,
-    });
-  });
-});
-
-describe('home page copy', () => {
-  it('translates every capability prompt into Chinese', () => {
-    for (const { id, prompts } of CAPABILITIES) {
-      const key = id as keyof typeof zhCN.home.capabilities;
-      for (const prompt of prompts) {
-        const zh = (
-          zhCN.home.capabilities[key].prompts as Record<
-            string,
-            { label: string; text: string }
-          >
-        )[prompt];
-        expect(zh?.text, `${id}.${prompt}`).toBeTruthy();
-        expect(zh?.label, `${id}.${prompt}`).toBeTruthy();
-      }
-    }
+      screen.getByText('暂无业务权限，请联系管理员配置角色和业务归属。'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Check delivery')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('link', { name: '采购订单' }),
+    ).not.toBeInTheDocument();
   });
 });

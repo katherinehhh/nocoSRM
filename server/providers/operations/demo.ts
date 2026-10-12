@@ -261,8 +261,6 @@ export async function createDemo(
       for (const [template, name, threshold] of [
         ['reorder', '安全库存补货建议', 0],
         ['delivery', '未来7天交期提醒', 7],
-        ['matching', '发票匹配异常巡检', 0],
-        ['payment', '到期结算付款草稿', 7],
       ] as const)
         await make('policies', name, {
           template,

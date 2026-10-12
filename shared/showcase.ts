@@ -9,9 +9,10 @@ export const deliveryStates = [
 ] as const;
 export const LineSchema = z
   .object({
+    sourceLineId: z.string().max(64).optional(),
     sku: z.string().min(1).max(80),
     name: z.string().min(1).max(200),
-    fnsku: z.string().regex(/^[A-Za-z0-9._-]{1,80}$/),
+    fnsku: z.string().regex(/^[A-Za-z0-9._-]{0,80}$/),
     allocation: z.number().int().min(1).max(100000),
     unitsPerBox: z.number().int().min(1).max(10000),
   })
@@ -33,6 +34,7 @@ export const DeliveryInput = z
     lines: z.array(LineSchema).min(1).max(100),
     labelCount: z.number().int().min(1).max(400),
     requestId: z.string().min(1).max(100),
+    expectedOrderVersion: z.number().int().positive().optional(),
     expectedVersion: z.number().int().nonnegative().optional(),
   })
   .strict();
@@ -70,6 +72,7 @@ export interface Delivery {
   organizationId: string;
   supplierId: string;
   orderId: string;
+  orderSourceVersion?: number | null;
   orderNumber?: string;
   supplierName?: string;
   region: string;

@@ -1,3 +1,4 @@
+import { loadOperationsFixture } from '../helpers/operations-fixture.js';
 // @vitest-environment node
 import { randomBytes } from 'node:crypto';
 import { expect } from 'vitest';
@@ -20,24 +21,26 @@ const test = createAppTest({
 });
 test('manufacturing demo, scoped supplier access and payment segregation', async ({
   testApp,
+  app,
   request,
 }) => {
   expect((await request('/operations/orders')).status).toBe(401);
   const admin = await signIn(testApp, DEFAULT_ADMIN_CREDENTIALS);
   const password = 'Operations-Test-Only-294!';
-  const demo = await admin.fetch('/operations/demo', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
-    body: JSON.stringify({ password }),
-  });
-  expect(await demo.clone().text()).not.toContain('INTERNAL_SERVER_ERROR');
-  expect(demo.status).toBe(200);
-  const repeat = await admin.fetch('/operations/demo', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Origin: 'http://localhost' },
-    body: JSON.stringify({ password }),
-  });
-  expect(repeat.status).toBe(200);
+  await loadOperationsFixture(app, password);
+  await loadOperationsFixture(app, password);
+  expect(
+    (
+      await admin.fetch('/operations/demo', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'http://localhost',
+        },
+        body: JSON.stringify({ password }),
+      })
+    ).status,
+  ).toBe(410);
   const orders = await admin.fetch('/operations/orders');
   expect(orders.status).toBe(200);
   const list = (await orders.json()) as { data: Doc[] };
@@ -115,9 +118,11 @@ test('manufacturing demo, scoped supplier access and payment segregation', async
 }, 60000);
 
 test('purchase-to-settlement flow, optimistic locking, dry runs and idempotent automation', async ({
+  app,
   testApp,
 }) => {
   const password = 'Operations-Test-Only-294!';
+  await loadOperationsFixture(app, password);
   const admin = await signIn(testApp, DEFAULT_ADMIN_CREDENTIALS);
   const planner = await signIn(testApp, {
     email: 'planner@supply.demo.invalid',
@@ -172,6 +177,63 @@ test('purchase-to-settlement flow, optimistic locking, dry runs and idempotent a
     action: string,
     key = crypto.randomUUID(),
   ) {
+    if (
+      kind === 'receipts' &&
+      action === 'post' &&
+      d.qualityRequired &&
+      d.status === 'draft'
+    ) {
+      const input = {
+        name: 'Test inspection',
+        sourceId: d.id,
+        supplierId: null,
+        deadline: '',
+        data: {
+          sourceVersion: d.version,
+          criteria: 'Test specifications',
+          evidence: 'Inspected receipt quantities',
+          lines: d.payload.lines!.map((l) => ({
+            id: l.id,
+            materialId: l.materialId,
+            quantity: l.quantity,
+            accepted: l.accepted ?? l.quantity,
+            rejected: l.rejected ?? 0,
+          })),
+        },
+        requestKey: crypto.randomUUID(),
+      };
+      const created = await admin.fetch('/srmCore/inspection', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+      });
+      expect(created.status).toBe(200);
+      let quality = (
+        (await created.json()) as {
+          data: { id: string; lifecycleVersion: number };
+        }
+      ).data;
+      for (const [actor, action] of [
+        [admin, 'submit'],
+        [approver, 'approve'],
+      ] as const) {
+        const result = await actor.fetch(
+          `/srmCore/inspection/${quality.id}/actions/${action}`,
+          {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+              version: quality.lifecycleVersion,
+              requestKey: crypto.randomUUID(),
+            }),
+          },
+        );
+        expect(result.status).toBe(200);
+        quality = ((await result.json()) as { data: typeof quality }).data;
+      }
+      const current = await client.fetch(`/operations/receipts/${d.id}`);
+      d = ((await current.json()) as { data: Doc }).data;
+    }
     const r = await client.fetch(
       `/operations/${kind}/${d.id}/actions/${action}`,
       {

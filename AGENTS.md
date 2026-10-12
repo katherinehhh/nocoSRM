@@ -439,3 +439,7 @@ Use `Loading` for page or panel waits and `Spinner` (the shadcn-compatible adapt
 ## Customer demonstration embed
 
 The authenticated `/integrations/embed/work-board` route uses the same page and server guards with a reduced AppLayout, omitting sidebar/header chrome for local partner embedding. This application shell exception is path-specific; other routes retain normal navigation, account controls, authorization refresh and locale synchronization. Both local iframe directions use sandbox attributes; no global CSP or authentication relaxation is introduced.
+
+## Operational workspace routing
+
+The SRM workspace lives at `/workspace`; `/` and legacy `/showcase` redirect there. It owns contextual record children so overlays return to the workspace. In `client/routing/route-tree.tsx`, pure navigation groups whose resolved path is `/` render as pathless React Router groups. They own no page and must not compete with the landing route; prefix groups such as `/supply` keep their paths. Preserve this correction when upgrading the template; permissions and actual page routes are unchanged.

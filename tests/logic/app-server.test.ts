@@ -8,6 +8,7 @@ import {
   type TestAppConfig,
 } from '@nocobase/app-testing/server';
 import {
+  cpSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -645,7 +646,7 @@ describe('app server', () => {
     expect(viteRequestCount).toBe(0);
   });
 
-  it('starts a fresh Default without example tables or APIs', async () => {
+  it('starts a fresh SRM without template example tables and guards unknown APIs', async () => {
     const clientDir = mkdtempSync(
       path.join(tmpdir(), 'nocobase-default-fresh-client-'),
     );
@@ -674,8 +675,27 @@ describe('app server', () => {
     } while (cursor);
     expect(tables.some((name) => name.includes('example'))).toBe(false);
     const baseUrl = `http://localhost${app.application.publicBasePath}`;
+    const signIn = await requestApp(
+      app,
+      `${baseUrl}/api/auth/sign-in/username`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'nocobase', password: 'admin123' }),
+      },
+    );
+    expect(signIn.status).toBe(200);
+    const cookie = signIn.headers
+      .getSetCookie()
+      .map((header) => header.split(';')[0])
+      .join('; ');
     for (const endpoint of ['articles', 'example', 'routesExample']) {
-      const response = await requestApp(app, `${baseUrl}/api/${endpoint}`);
+      expect((await requestApp(app, `${baseUrl}/api/${endpoint}`)).status).toBe(
+        401,
+      );
+      const response = await requestApp(app, `${baseUrl}/api/${endpoint}`, {
+        headers: { cookie },
+      });
       // An unregistered API path is a JSON 404, never the application page.
       expect(response.status).toBe(404);
       await expect(response.json()).resolves.toMatchObject({
@@ -1348,7 +1368,15 @@ async function createEmbeddedTestScope(
     paths:
       options.paths ??
       (options.rootDir
-        ? undefined
+        ? {
+            rootDir: options.rootDir,
+            serverDir: path.join(sourceRoot, 'server'),
+            databaseDir: path.join(options.rootDir, 'database'),
+            clientDir:
+              options.clientDir ?? path.join(options.rootDir, 'dist/client'),
+            storageDir:
+              options.dataDir ?? path.join(options.rootDir, 'storage'),
+          }
         : {
             rootDir: sourceRoot,
             serverDir: path.join(sourceRoot, 'server'),
@@ -1404,6 +1432,13 @@ function createInstalledStandaloneServer(
 }
 
 function createEmbeddedPluginFixture(rootDir: string): void {
+  // Application providers start their persisted lifecycles in this fixture too.
+  // Carry the application's immutable schema history into the isolated root.
+  cpSync(
+    path.resolve(import.meta.dirname, '../../database'),
+    path.join(rootDir, 'database'),
+    { recursive: true },
+  );
   // Derived from the composition root rather than written out again. The embedded server resolves every plugin
   // `server/plugins.ts` declares, and a temporary root resolves nothing it is not given, so a separate list has to
   // be updated whenever a plugin is registered — and a copy of a list is a copy that goes stale.
@@ -1429,10 +1464,14 @@ function createEmbeddedPluginFixture(rootDir: string): void {
     }),
   );
 
-  for (const packageName of pluginPackages) {
-    const packageRoot = path.dirname(
-      require.resolve(`${packageName}/package.json`),
-    );
+  for (const packageName of [
+    ...pluginPackages,
+    '@nocobase/db',
+    '@nocobase/authorization',
+  ]) {
+    const packageRoot = pluginPackages.includes(packageName)
+      ? path.dirname(require.resolve(`${packageName}/package.json`))
+      : path.resolve(import.meta.dirname, '../../node_modules', packageName);
     const target = path.join(
       rootDir,
       'node_modules',

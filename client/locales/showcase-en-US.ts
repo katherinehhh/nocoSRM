@@ -1,4 +1,29 @@
 export default {
+  openFinance: 'Open finance workspace (new window)',
+  financeBoundary:
+    'SRM handles delivery checks and discrepancies. Settlement, invoices and payments belong to the separate finance app. Posted receipts and finance outcomes synchronize through signed APIs. Each application requires its own sign-in.',
+  modelSetupHint:
+    'Choose a provider to prefill the name, URL and model. Usually only its API key is needed.',
+  modelPresetHint:
+    'Defaults are editable. Changing provider preserves custom values and clears the old key. Generic compatible services need their own URL and model.',
+  modelUrlInvalid:
+    'Enter an HTTP(S) service URL, not an email or a URL containing credentials.',
+  modelUrlRequired: 'A generic compatible service needs a base URL.',
+  modelKeyRequired: 'Enter the selected provider’s API key.',
+  modelNameLength: 'Use at most 100 characters for the service name.',
+  modelIdLength: 'Use at most 200 characters for the model ID.',
+  modelKeyKeep:
+    'A key is saved. Leave blank to keep it, or enter a replacement.',
+  modelKeyHint:
+    'Use an API key from the model provider, not your application password. Local Ollama can leave it blank.',
+  modelUrlHint:
+    'Known providers use native default URLs. Adjust proxy, region or workspace URLs to match your service.',
+  modelPlaceholders: {
+    title: 'For example: Supply chain assistant',
+    baseUrl: 'https://model-service-url',
+    apiKey: 'Paste the provider API key',
+    model: 'Model ID from your provider',
+  },
   markReview: 'Mark as needing review',
   productName: 'Product name',
   documentTruncated:
@@ -14,13 +39,13 @@ export default {
   succeeded: 'Succeeded',
   failed: 'Failed',
   externalReference: 'External reference',
-  externalTitle: 'Local external system demonstration',
+  externalTitle: 'Local external system',
   externalNotice:
     'This is a local fixture. A real system requires an address and embedding permissions.',
 
   workflowEnabled: 'Approval workflow enabled',
   enableWorkflow: 'Enable delivery approval workflow',
-  guide: 'Customer demonstration',
+  guide: 'Operations guide',
   description:
     'Follow delivery plans through workflows, integrations and assisted operations.',
   saved: 'Operation saved',
@@ -36,9 +61,9 @@ export default {
   deliveryPlans: 'Delivery plans',
   deliveryDescription:
     'A native lifecycle owns status; submission starts the native approval workflow.',
-  ledger: 'Business ledger',
+  ledger: 'Delivery reconciliation ledger',
   ledgerDescription:
-    'Combine orders, matched invoices, registered payments and external acknowledgments.',
+    'Compare order amounts with external delivery acknowledgments and record discrepancies. Recheck after source updates.',
   localAmount: 'Order amount',
   externalAmount: 'External amount',
   difference: 'Amount difference',
@@ -82,7 +107,7 @@ export default {
     'Native mailbox workspace. Connect an account to synchronize and process mail.',
   integrations: 'Integrations',
   integrationDescription:
-    'Demonstrate sync, signed callbacks, event retries and page embedding.',
+    'Inspect signed inbound callbacks and external connection status.',
   sync: 'Synchronize external data',
   signatureNotice:
     'Callbacks use HMAC-SHA256, a five-minute window and event deduplication.',
@@ -98,7 +123,7 @@ export default {
   embeds: 'Page embedding',
   embedDescription:
     'Embed a local external-system fixture here; its host page embeds the live work board.',
-  externalHost: 'Open external host demonstration',
+  externalHost: 'Open external system host',
   externalPage: 'Local external-system fixture',
   templates: 'Print templates',
   templateDescription:
@@ -123,7 +148,7 @@ export default {
   modelMode: 'Real model analysis',
   modelReady: 'A model service is configured for inference.',
   modelUnconfigured:
-    'No real model configured. Rule rehearsal remains available.',
+    'No model configured. Ask an administrator to configure a model service.',
   analyze: 'Analyze document text',
   analyzeDescription:
     'Upload text, CSV, JSON or Markdown, or paste unstructured text. Inspect facts, evidence and missing fields.',
@@ -159,7 +184,7 @@ export default {
   disabled: 'Disabled',
   secretNotice:
     'Keys are submitted only when saved and never returned. Leave blank to preserve a saved key.',
-  group: 'Customer demonstration',
+  group: 'Delivery collaboration',
   metrics: {
     count: 'Delivery plans',
     pending: 'Pending approval',
@@ -168,7 +193,7 @@ export default {
   pages: {
     'delivery-plans': 'Delivery plans',
     'work-board': 'Work board',
-    'business-ledger': 'Business ledger',
+    'business-ledger': 'Delivery reconciliation ledger',
     integrations: 'Integrations',
     'print-templates': 'Print templates',
     'ai-workbench': 'AI workbench',
@@ -221,7 +246,7 @@ export default {
   missingFields: 'Missing fields',
   emptyTitle: 'No records yet',
   emptyDescription:
-    'Create a business record or ask an administrator to prepare demonstration data.',
+    'Create a business record or ask an administrator to configure business access.',
   signInAgain: 'Sign in again',
   askAdministrator: 'Ask an administrator to check your access permissions.',
   operationComplete: 'Completed {{operation}} {{name}}',

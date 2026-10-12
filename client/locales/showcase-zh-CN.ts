@@ -1,4 +1,28 @@
 export default {
+  openFinance: '打开财务工作台（新窗口）',
+  financeBoundary:
+    'SRM 负责交货核对与差异处置；结算、发票及付款在独立财务应用处理。正式收货及财务结算结果通过签名 API 双向同步，两套应用需要分别登录。',
+  modelSetupHint:
+    '先选择供应商，系统自动带出名称、地址和模型；通常只需填写该供应商的 API 密钥。',
+  modelPresetHint:
+    '默认值可修改；切换供应商保留手动修改的内容，并清空旧密钥。通用兼容服务需填写自己的地址和模型。',
+  modelUrlInvalid:
+    '请输入以 https:// 或 http:// 开头的服务地址，不能填写邮箱或包含账号密码。',
+  modelUrlRequired: '通用兼容服务需要填写服务地址。',
+  modelKeyRequired: '请填写所选供应商的 API 密钥。',
+  modelNameLength: '服务名称最多100个字符。',
+  modelIdLength: '模型标识最多200个字符。',
+  modelKeyKeep: '已有密钥；留空保留，填写后替换。',
+  modelKeyHint:
+    '填写模型平台生成的 API 密钥，不是应用登录密码；本地 Ollama 可留空。',
+  modelUrlHint:
+    '已知供应商自动填入原生默认地址；代理、地域或工作空间地址请按实际服务修改。',
+  modelPlaceholders: {
+    title: '例如：供应链业务助手',
+    baseUrl: 'https://模型服务地址',
+    apiKey: '粘贴供应商 API 密钥',
+    model: '供应商提供的模型标识',
+  },
   markReview: '标记待核对',
   productName: '商品名称',
   documentTruncated: '仅提取前10页及前20000字，请补充缺失内容。',
@@ -13,12 +37,12 @@ export default {
   succeeded: '已成功',
   failed: '已失败',
   externalReference: '外部单号',
-  externalTitle: '本地外部系统演示',
+  externalTitle: '本地外部系统',
   externalNotice: '这是本地演示夹具。真实系统需要配置地址和嵌入权限。',
 
   workflowEnabled: '审批工作流已启用',
   enableWorkflow: '启用交货审批工作流',
-  guide: '客户演示导航',
+  guide: '业务操作指南',
   description:
     '从交货计划到业务台账，用可追溯的操作展示原生流程、集成和 AI 辅助。',
   saved: '操作已保存',
@@ -33,9 +57,9 @@ export default {
   open: '打开',
   deliveryPlans: '交货计划',
   deliveryDescription: '计划状态由原生状态机管理；提交后进入原生审批工作流。',
-  ledger: '业务台账',
+  ledger: '交货核对台账',
   ledgerDescription:
-    '合并采购、已匹配发票、已登记付款和外部回执，实时计算差异。',
+    '对比采购金额与外部交货回执，计算差异并记录处置；来源更新后重新核对。',
   localAmount: '采购金额',
   externalAmount: '外部金额',
   difference: '金额差异',
@@ -74,7 +98,7 @@ export default {
   mail: '邮件中心',
   mailDescription: '原生邮箱工作台。连接真实邮箱后可同步和处理邮件。',
   integrations: '系统集成',
-  integrationDescription: '展示数据同步、签名回调、事件重试和双向页面嵌套。',
+  integrationDescription: '查看签名回执、集成事件与外部连接状态。',
   sync: '同步外部数据',
   signatureNotice: '回调使用 HMAC-SHA256、5 分钟时间窗和事件幂等校验。',
   connectorReady: '真实签名连接器已配置。',
@@ -109,7 +133,7 @@ export default {
   rulesMode: '本地规则演练',
   modelMode: '真实模型分析',
   modelReady: '模型服务已配置，可进行真实推理。',
-  modelUnconfigured: '未配置真实模型，当前可使用规则演练。',
+  modelUnconfigured: '未配置模型，请管理员配置模型服务后使用。',
   analyze: '分析文件内容',
   analyzeDescription:
     '上传文本、CSV、JSON 或 Markdown，或粘贴非标文本。输出提取字段、证据和缺失项。',
@@ -141,7 +165,7 @@ export default {
   enabled: '已启用',
   disabled: '已禁用',
   secretNotice: '密钥仅在保存时提交，不会返回。编辑时留空保留已有密钥。',
-  group: '客户演示',
+  group: '交货协同',
   metrics: {
     count: '交货计划',
     pending: '待审批',
@@ -150,7 +174,7 @@ export default {
   pages: {
     'delivery-plans': '交货计划',
     'work-board': '工作看板',
-    'business-ledger': '业务台账',
+    'business-ledger': '交货核对台账',
     integrations: '系统集成',
     'print-templates': '打印模板',
     'ai-workbench': 'AI 工作台',
@@ -197,7 +221,7 @@ export default {
   analysisFields: { sku: 'SKU', quantity: '数量', fnsku: 'FNSKU' },
   missingFields: '缺失字段',
   emptyTitle: '暂无记录',
-  emptyDescription: '创建业务记录或联系管理员准备演示数据。',
+  emptyDescription: '创建业务记录或联系管理员配置业务权限。',
   signInAgain: '重新登录',
   askAdministrator: '请联系管理员检查你的访问权限。',
   operationComplete: '{{operation}}已完成 {{name}}',

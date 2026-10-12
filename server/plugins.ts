@@ -20,6 +20,7 @@ import mail from '@nocobase/app-plugin-mail/server';
 // Client 2.x plugin pages are intentionally excluded; this app uses client 3.x.
 import workflow from '@nocobase/app-plugin-workflow/server';
 import agents from '@nocobase/app-plugin-agents/server';
+import approval from '@nocobase/app-plugin-approval/server';
 
 const serverPlugins: AppServerPlugins = defineServerPlugins([
   authentication,
@@ -39,6 +40,7 @@ const serverPlugins: AppServerPlugins = defineServerPlugins([
   mail,
   workflow,
   agents,
+  approval,
 ]);
 
 export default serverPlugins;

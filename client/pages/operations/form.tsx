@@ -60,13 +60,21 @@ export default function FormPage() {
             if (id) void record.refetch();
           }}
         />
-        {lookup.data && (!id || record.data) && (
-          <DocumentForm
-            key={id ?? 'new'}
-            kind={kind}
-            initial={record.data?.data}
-            lookups={lookup.data.data}
-          />
+        {kind === 'policies' &&
+        ['matching', 'payment'].includes(
+          record.data?.data.payload.template ?? '',
+        ) ? (
+          <p>{t('srm.financePolicyReadonly')}</p>
+        ) : (
+          lookup.data &&
+          (!id || record.data) && (
+            <DocumentForm
+              key={id ?? 'new'}
+              kind={kind}
+              initial={record.data?.data}
+              lookups={lookup.data.data}
+            />
+          )
         )}
       </PageContainer>
     </RouteChildPage>
@@ -261,6 +269,17 @@ export function DocumentForm({
               onChange={(businessDate) => patch({ businessDate })}
             />,
           )}
+          {kind === 'orders' &&
+            wrap(
+              'expectedDeliveryDate',
+              <DatePicker
+                value={payload.expectedDeliveryDate ?? ''}
+                label={t('ops.fields.expectedDeliveryDate')}
+                onChange={(expectedDeliveryDate) =>
+                  field({ expectedDeliveryDate })
+                }
+              />,
+            )}
           {![
             'suppliers',
             'materials',
@@ -378,7 +397,7 @@ export function DocumentForm({
                   value={payload.template}
                   onChange={(e) => field({ template: e.target.value })}
                 >
-                  {['reorder', 'delivery', 'matching', 'payment'].map((k) => (
+                  {['reorder', 'delivery'].map((k) => (
                     <NativeSelectOption key={k} value={k}>
                       {t(`ops.templates.${k}`)}
                     </NativeSelectOption>

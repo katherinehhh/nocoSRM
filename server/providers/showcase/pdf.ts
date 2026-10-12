@@ -105,8 +105,12 @@ export async function deliveryPdf(
     .fontSize(8)
     .text(
       zh
-        ? '此页为报表汇总，以下含有条形码。'
-        : 'Summary report. Barcode labels follow.',
+        ? lines.some((line) => line.fnsku)
+          ? '此页为报表汇总，以下含有条形码。'
+          : '此页为报表汇总。未填写 FNSKU 的标签不生成条形码。'
+        : lines.some((line) => line.fnsku)
+          ? 'Summary report. Barcode labels follow.'
+          : 'Summary report. Labels without FNSKU have no barcode.',
       24,
       y + 8,
     );
@@ -124,6 +128,7 @@ export async function deliveryPdf(
       width: w - 8,
       align: 'center',
     });
+    if (!line.fnsku) continue;
     const barcode = await bwipjs.toBuffer({
       bcid: 'code128',
       text: line.fnsku,

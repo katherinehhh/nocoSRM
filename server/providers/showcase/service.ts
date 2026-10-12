@@ -1,3 +1,5 @@
+import { SourceMessage, tax } from '../../integration/protocol.js';
+import { bridgeToken, type ExportRow } from '../../integration/provider.js';
 import {
   createHash,
   createHmac,
@@ -85,23 +87,99 @@ export class ShowcaseService {
       ...(a.supplierId ? { supplierId: a.supplierId } : {}),
     };
   }
-  async get(a: ShowcaseActor, id: string) {
-    const r = await this.repo<Delivery>('showcaseDeliveries', a).findOne({
+  async get(a: ShowcaseActor, id: string, tx = this.db.connection()) {
+    const r = await this.repo<Delivery>('showcaseDeliveries', a, tx).findOne({
       filter: { id, ...this.scope(a) },
     });
     if (!r) throw new ShowcaseError('NOT_FOUND');
     return r as Delivery;
   }
   async deliveries(a: ShowcaseActor) {
-    return (await this.repo<Delivery>('showcaseDeliveries', a).findMany({
-      filter: this.scope(a),
-      limit: 1000,
-      sort: (s) => s.field('updatedAt').desc(),
-    })) as Delivery[];
+    const result: Delivery[] = [];
+    for (let offset = 0; ; offset += 1000) {
+      const batch = await this.repo<Delivery>('showcaseDeliveries', a).findMany(
+        {
+          filter: this.scope(a),
+          limit: 1000,
+          offset,
+          sort: (s) => s.field('id').asc(),
+        },
+      );
+      result.push(...(batch as Delivery[]));
+      if (batch.length < 1000) return result;
+    }
+  }
+  async validateOrder(
+    a: ShowcaseActor,
+    orderId: string,
+    lines: DeliveryValues['lines'],
+    version: number | null | undefined,
+    tx = this.db.connection(),
+    excludeId?: string,
+  ) {
+    const order = await this.repo<Doc>('opsOrders', a, tx).findOne({
+      filter: { id: orderId, ...this.scope(a) },
+    });
+    if (!order || !['confirmed', 'partial'].includes(order.status ?? ''))
+      throw new ShowcaseError('SOURCE_ORDER_CHANGED', 'orderId');
+    if (order.version !== version)
+      throw new ShowcaseError('SOURCE_ORDER_CHANGED', 'orderId');
+    const payload =
+      typeof order.payload === 'string'
+        ? (JSON.parse(order.payload) as Payload)
+        : (order.payload ?? {});
+    const receipts = await this.repo<Doc>('opsReceipts', a, tx).findMany({
+      filter: { ...this.scope(a), status: 'posted' },
+      limit: 10001,
+    });
+    if (receipts.length > 10000) throw new ShowcaseError('TOO_MANY_RECORDS');
+    const posted = receipts
+      .map((raw) => ({
+        ...raw,
+        payload:
+          typeof raw.payload === 'string'
+            ? (JSON.parse(raw.payload) as Payload)
+            : raw.payload,
+      }))
+      .filter((r) => r.payload?.orderId === orderId);
+    const plans = await this.repo<Delivery>(
+      'showcaseDeliveries',
+      a,
+      tx,
+    ).findMany({ filter: { ...this.scope(a), orderId }, limit: 1001 });
+    if (plans.length > 1000) throw new ShowcaseError('TOO_MANY_RECORDS');
+    const used = new Set<string>();
+    for (const line of lines) {
+      const source = payload.lines?.find((x) => x.id === line.sourceLineId);
+      const accepted = posted
+        .flatMap((r) => r.payload?.lines ?? [])
+        .filter((l) => l.sourceLineId === line.sourceLineId)
+        .reduce((n, l) => n + (l.accepted ?? l.quantity), 0);
+      const reserved = plans
+        .filter(
+          (p) =>
+            p.id !== excludeId &&
+            ['pending', 'approved', 'shipped'].includes(p.status!),
+        )
+        .flatMap((p) => JSON.parse(p.lines!) as DeliveryValues['lines'])
+        .filter((l) => l.sourceLineId === line.sourceLineId)
+        .reduce((n, l) => n + l.allocation, 0);
+      if (
+        !source ||
+        used.has(source.id) ||
+        line.allocation + accepted + reserved > source.quantity
+      )
+        throw new ShowcaseError('INVALID', 'lines');
+      used.add(source.id);
+    }
+    return order;
   }
   async presentation(a: ShowcaseActor, records: Delivery[]) {
     const suppliers = await this.repo<Doc>('opsSuppliers', a).findMany({
-      filter: this.scope(a),
+      filter: {
+        organizationId: a.organizationId,
+        ...(a.supplierId ? { id: a.supplierId } : {}),
+      },
       limit: 1000,
     });
     const orders = await this.repo<Doc>('opsOrders', a).findMany({
@@ -138,7 +216,7 @@ export class ShowcaseService {
       available: [
         ...view.available,
         ...(record.status === 'pending'
-          ? ['approve', 'reject']
+          ? [...(!record.workflowRunId ? ['submit'] : []), 'approve', 'reject']
               .filter((name) => !view.available.some((t) => t.name === name))
               .map((name) => ({ name, allowed: true }))
           : []),
@@ -153,7 +231,9 @@ export class ShowcaseService {
           ...t,
           allowed: ['approve', 'reject'].includes(t.name)
             ? record.submittedBy !== a.id && wait?.status === 'pending'
-            : t.allowed,
+            : t.name === 'submit' && record.status === 'pending'
+              ? record.submittedBy === a.id
+              : t.allowed,
         })),
       wait,
       decisionRequest: record.resumeRequestId
@@ -183,9 +263,13 @@ export class ShowcaseService {
           filter: { id: saved.id, ...this.scope(a) },
         });
       }
-      const order = await this.repo<Doc>('opsOrders', a, tx).findOne({
-        filter: { id: input.orderId, ...this.scope(a) },
-      });
+      const order = await this.validateOrder(
+        a,
+        input.orderId,
+        input.lines,
+        input.expectedOrderVersion,
+        tx,
+      );
       if (!order?.supplierId) throw new ShowcaseError('INVALID', 'orderId');
       const id = randomUUID(),
         now = new Date().toISOString();
@@ -199,6 +283,7 @@ export class ShowcaseService {
         region: input.region,
         businessDate: input.businessDate,
         notes: input.notes,
+        orderSourceVersion: input.expectedOrderVersion,
         lines: JSON.stringify(input.lines),
         labelCount: input.labelCount,
         amount: Number(order.amount),
@@ -244,29 +329,40 @@ export class ShowcaseService {
     });
   }
   async edit(a: ShowcaseActor, id: string, input: DeliveryValues) {
-    const current = await this.get(a, id);
-    if (current.status !== 'draft') throw new ShowcaseError('INVALID_STATE');
-    if (current.lifecycleVersion !== input.expectedVersion)
-      throw new ShowcaseError('CONFLICT');
-    if (input.orderId !== current.orderId)
-      throw new ShowcaseError('INVALID', 'orderId');
-    return this.repo<Delivery>('showcaseDeliveries', a).updateOne({
-      filter: {
+    return this.db.transaction(async (tx) => {
+      const current = await this.get(a, id, tx);
+      if (current.status !== 'draft') throw new ShowcaseError('INVALID_STATE');
+      if (current.lifecycleVersion !== input.expectedVersion)
+        throw new ShowcaseError('CONFLICT');
+      await this.validateOrder(
+        a,
+        input.orderId,
+        input.lines,
+        input.expectedOrderVersion,
+        tx,
         id,
-        ...this.scope(a),
-        status: 'draft',
-        lifecycleVersion: input.expectedVersion,
-      },
-      values: {
-        name: input.name,
-        region: input.region,
-        businessDate: input.businessDate,
-        notes: input.notes,
-        lines: JSON.stringify(input.lines),
-        labelCount: input.labelCount,
-        lifecycleVersion: current.lifecycleVersion + 1,
-        updatedAt: new Date().toISOString(),
-      },
+      );
+      if (input.orderId !== current.orderId)
+        throw new ShowcaseError('INVALID', 'orderId');
+      return this.repo<Delivery>('showcaseDeliveries', a, tx).updateOne({
+        filter: {
+          id,
+          ...this.scope(a),
+          status: 'draft',
+          lifecycleVersion: input.expectedVersion,
+        },
+        values: {
+          name: input.name,
+          region: input.region,
+          businessDate: input.businessDate,
+          notes: input.notes,
+          orderSourceVersion: input.expectedOrderVersion,
+          lines: JSON.stringify(input.lines),
+          labelCount: input.labelCount,
+          lifecycleVersion: current.lifecycleVersion + 1,
+          updatedAt: new Date().toISOString(),
+        },
+      });
     });
   }
   async fire(
@@ -277,6 +373,21 @@ export class ShowcaseService {
     key: string,
   ) {
     const r = await this.get(a, id);
+    if (transition === 'submit' && r.status === 'pending' && !r.workflowRunId) {
+      if (r.lifecycleVersion !== version) throw new ShowcaseError('CONFLICT');
+      if (r.submittedBy !== a.id) throw new ShowcaseError('FORBIDDEN');
+      await this.startFlow(r, `delivery-approval:${id}:${r.lifecycleVersion}`);
+      return this.view(a, id);
+    }
+    if (transition === 'submit')
+      await this.validateOrder(
+        a,
+        r.orderId,
+        JSON.parse(r.lines) as DeliveryValues['lines'],
+        r.orderSourceVersion,
+        this.db.connection(),
+        id,
+      );
     if (['approve', 'reject'].includes(transition)) {
       if (r.submittedBy === a.id) throw new ShowcaseError('SELF_APPROVAL');
       if (r.lifecycleVersion !== version) throw new ShowcaseError('CONFLICT');
@@ -313,15 +424,61 @@ export class ShowcaseService {
       });
       return this.view(a, id);
     }
-    await this.runtime.fire('deliveryPlans', id, transition, {
-      actor: { id: a.id },
-      manual: true,
-      expect: { version },
-      requestId: key,
+    await this.db.transaction(async (tx) => {
+      if (transition === 'submit')
+        await this.validateOrder(
+          a,
+          r.orderId,
+          JSON.parse(r.lines) as DeliveryValues['lines'],
+          r.orderSourceVersion,
+          tx,
+          id,
+        );
+      await this.runtime.fire('deliveryPlans', id, transition, {
+        actor: { id: a.id },
+        manual: true,
+        expect: { version },
+        requestId: `${a.id}:${key}`,
+        transaction: tx,
+      });
     });
+    if (transition === 'submit') {
+      const current = await this.get(a, id);
+      if (!current.workflowRunId) {
+        try {
+          await this.startFlow(
+            current,
+            `delivery-approval:${id}:${current.lifecycleVersion}`,
+          );
+        } catch (error) {
+          if (
+            error instanceof ShowcaseError &&
+            error.code === 'WORKFLOW_DISABLED'
+          )
+            await this.runtime.fire('deliveryPlans', id, 'submissionFailed', {
+              actor: SYSTEM_ACTOR,
+              requestId: `submission-failed:${a.id}:${key}`,
+              expect: { version: current.lifecycleVersion },
+            });
+          throw error;
+        }
+      }
+    }
     return this.view(a, id);
   }
   async startFlow(record: Delivery, key: string) {
+    // Durable lifecycle effect and explicit retry share the native workflow event key.
+    // A process interruption can retry without launching a second approval run.
+    const latest = await this.db
+      .repository<Delivery>('showcaseDeliveries')
+      .findOne({ filter: { id: record.id } });
+    if (
+      !latest ||
+      latest.status !== 'pending' ||
+      latest.workflowRunId ||
+      latest.lifecycleVersion !== record.lifecycleVersion
+    )
+      return;
     const receipt = await this.services
       .resolve(workflowServiceToken)
       .trigger(
@@ -332,7 +489,11 @@ export class ShowcaseService {
     if (receipt.status === 'skipped')
       throw new ShowcaseError('WORKFLOW_DISABLED');
     await this.db.repository<Delivery>('showcaseDeliveries').updateOne({
-      filter: { id: record.id },
+      filter: {
+        id: record.id,
+        status: 'pending',
+        lifecycleVersion: record.lifecycleVersion,
+      },
       values: { workflowRunId: String(receipt.runId) },
     });
   }
@@ -348,9 +509,14 @@ export class ShowcaseService {
     const external = await this.db
       .repository<StoredRow>('showcaseExternal')
       .findOne({ filter: { id } });
-    const evidence = external
-      ? (JSON.parse(external.payload) as { amount: number; quantity: number })
-      : null;
+    const evidence =
+      external &&
+      ['manual', 'webhook'].includes(
+        (JSON.parse(external.payload) as { provenance?: string }).provenance ??
+          '',
+      )
+        ? (JSON.parse(external.payload) as { amount: number; quantity: number })
+        : null;
     const allocation = (JSON.parse(r.lines) as { allocation: number }[]).reduce(
       (n, line) => n + line.allocation,
       0,
@@ -359,11 +525,14 @@ export class ShowcaseService {
       lowRisk:
         r.autoApprove &&
         !!order &&
+        order.version === r.orderSourceVersion &&
+        ['confirmed', 'partial'].includes(order.status ?? '') &&
         Number.isFinite(currentAmount) &&
         currentAmount === r.amount &&
         currentAmount <= 500000 &&
-        (!evidence ||
-          (evidence.amount === r.amount && evidence.quantity === allocation)),
+        !!evidence &&
+        evidence.amount === r.amount &&
+        evidence.quantity === allocation,
       amount: r.amount,
     };
   }
@@ -397,30 +566,9 @@ export class ShowcaseService {
     });
     return { applied: true };
   }
-  async ack(r: Delivery, key: string) {
-    await this.db.transaction(async (tx) => {
-      const repo = tx.repository<StoredRow>('showcaseEvents');
-      const id = hash(key);
-      if (await repo.findOne({ filter: { id } })) return;
-      await repo.createOne({
-        values: {
-          id,
-          organizationId: r.organizationId,
-          supplierId: r.supplierId,
-          recordId: r.id,
-          payload: JSON.stringify({
-            source: 'localExternal',
-            direction: 'outbound',
-            state: 'succeeded',
-            number: key,
-            status: r.status,
-            attempts: 1,
-          }),
-          version: 1,
-          updatedAt: new Date().toISOString(),
-        },
-      });
-    });
+  async ack(_r: Delivery, _key: string) {
+    // No outbound adapter is configured. Internal completion is not external delivery.
+    return { acknowledged: false, externalState: 'notConfigured' };
   }
   async scenario(a: ShowcaseActor, key: string) {
     const orders = await this.repo<Doc>('opsOrders', a).findMany({
@@ -434,6 +582,7 @@ export class ShowcaseService {
         await this.create(a, {
           name: i ? '人工审批交货演示' : '澳大利亚交货演示',
           orderId: orders[i % orders.length].id!,
+          expectedOrderVersion: orders[i % orders.length].version,
           region: 'AU',
           businessDate: new Date().toISOString().slice(0, 10),
           notes: 'Local customer demonstration',
@@ -560,7 +709,12 @@ export class ShowcaseService {
           organizationId: local.organizationId,
           supplierId: local.supplierId,
           recordId: line.id,
-          payload: JSON.stringify(line),
+          payload: JSON.stringify({
+            ...line,
+            provenance: a ? 'fixture' : 'webhook',
+            reference: data.eventId,
+            recordedAt: new Date().toISOString(),
+          }),
           version: (prev?.version ?? 0) + 1,
           updatedAt: new Date().toISOString(),
         };
@@ -574,7 +728,7 @@ export class ShowcaseService {
           supplierId: null,
           recordId: null,
           payload: JSON.stringify({
-            source: 'localExternal',
+            source: a ? 'fixture' : 'webhook',
             direction: 'inbound',
             state: 'succeeded',
             number: data.eventId,
@@ -669,105 +823,138 @@ export class ShowcaseService {
       return { id, replayed: false };
     });
   }
-  async ledger(a: ShowcaseActor) {
-    const docs = await this.presentation(a, await this.deliveries(a)),
-      remote = await this.rows(a, 'showcaseExternal'),
-      resolutions = await this.rows(a, 'showcaseResolutions');
-    const orders = await this.repo<Doc>('opsOrders', a).findMany({
-      filter: this.scope(a),
-      limit: 1000,
+  async ledgerRow(a: ShowcaseActor, r: Delivery, tx = this.db.connection()) {
+    const order = await this.repo<Doc>('opsOrders', a, tx).findOne({
+      filter: { id: r.orderId, ...this.scope(a) },
     });
-    const invoices = await this.repo<Doc>('opsInvoices', a).findMany({
-      filter: this.scope(a),
-      limit: 1000,
+    const ext = await this.repo<StoredRow>('showcaseExternal', a, tx).findOne({
+      filter: { id: r.id, ...this.scope(a) },
     });
-    const payments = await this.repo<Doc>('opsPayments', a).findMany({
-      filter: this.scope(a),
-      limit: 1000,
-    });
-    const settlements = await this.repo<Doc>('opsSettlements', a).findMany({
-      filter: this.scope(a),
-      limit: 1000,
-    });
-    const payload = (d: Partial<Doc>): Payload | undefined =>
-      typeof d.payload === 'string'
-        ? (JSON.parse(d.payload) as Payload)
-        : d.payload;
-    const sourceVersion = sourceSignature([
-      orders,
-      invoices,
-      payments,
-      settlements,
-    ]);
-    return docs.map((r) => {
-      const ext = remote.find((e) => e.recordId === r.id),
-        resolution = resolutions.find((e) => e.recordId === r.id),
-        external = ext
-          ? (JSON.parse(ext.payload) as { amount: number; quantity: number })
+    const resolution = await this.repo<StoredRow>(
+      'showcaseResolutions',
+      a,
+      tx,
+    ).findOne({ filter: { id: r.id, ...this.scope(a) } });
+    const raw = ext
+      ? (JSON.parse(ext.payload!) as {
+          amount: number;
+          quantity: number;
+          provenance?: string;
+          reference?: string;
+          recordedAt?: string;
+        })
+      : null;
+    const external =
+      raw && ['manual', 'webhook'].includes(raw.provenance ?? '') ? raw : null;
+    const localQuantity = (
+      JSON.parse(r.lines) as DeliveryValues['lines']
+    ).reduce((n, l) => n + l.allocation, 0);
+    const localAmount = Number(order?.amount ?? r.amount),
+      sourceVersion = sourceSignature([order ? [order] : []]);
+    const saved = resolution
+      ? (JSON.parse(resolution.payload!) as {
+          sourceVersion: string;
+          localVersion: number;
+          externalVersion: number;
+          disposition: string;
+        })
+      : null;
+    const valid =
+      saved?.sourceVersion === sourceVersion &&
+      saved.localVersion === r.lifecycleVersion &&
+      saved.externalVersion === (ext?.version ?? 0);
+    const bridge = this.services.resolve(bridgeToken);
+    const financeRows = await tx
+      .repository<ExportRow>('srmFinanceSources')
+      .findMany({
+        filter: { orderId: r.orderId, supplierId: r.supplierId },
+        limit: 1000,
+      });
+    const finance = financeRows.map((row) => {
+      const parsed = SourceMessage.safeParse(JSON.parse(row.snapshot));
+      const originalNet = parsed.success
+        ? parsed.data.receivedQty * parsed.data.unitPrice
+        : null;
+      const originalTax =
+        parsed.success && originalNet !== null
+          ? tax(originalNet, parsed.data.taxRateBps)
           : null;
-      const local = orders.find((o) => o.id === r.orderId),
-        billed = invoices
-          .filter(
-            (i) => payload(i)?.orderId === r.orderId && i.status === 'matched',
-          )
-          .reduce((v, i) => v + Number(i.amount ?? 0), 0);
+      const raw = JSON.parse(row.snapshot) as {
+        receiptNo?: string;
+        receiptLineId?: string;
+      };
       return {
-        id: r.id,
-        number: r.number,
-        name: r.name,
-        supplierId: r.supplierId,
-        supplierName: r.supplierName,
-        externalReference: external ? r.number : null,
-        status: r.status,
-        localAmount: Number(local?.amount ?? r.amount),
-        invoiceAmount: billed,
-        registeredPayments: payments
-          .filter(
-            (p) =>
-              p.status === 'paid' &&
-              settlements.some(
-                (s) =>
-                  s.id === payload(p)?.settlementId &&
-                  payload(s)?.orderId === r.orderId,
-              ),
-          )
-          .reduce((v, p) => v + Number(p.amount ?? 0), 0),
-        externalAmount: external?.amount ?? null,
-        difference: external
-          ? external.amount - (local?.amount ?? r.amount)
+        receiptNo: raw.receiptNo ?? row.receiptId,
+        receiptLineId: raw.receiptLineId ?? row.id,
+        updatedAt: row.updatedAt,
+        original:
+          originalNet !== null && originalTax !== null
+            ? {
+                netAmount: originalNet,
+                taxAmount: originalTax,
+                grossAmount: originalNet + originalTax,
+              }
+            : null,
+        id: row.id,
+        state: row.state,
+        error: row.lastError,
+        sourceVersion: row.sourceVersion,
+        stale:
+          !!row.result &&
+          (JSON.parse(row.result) as { sourceVersion: number })
+            .sourceVersion !== row.sourceVersion,
+        result: row.result
+          ? (JSON.parse(row.result) as {
+              status: string;
+              netAmount: number;
+              taxAmount: number;
+              grossAmount: number;
+            })
           : null,
-        quantity: external?.quantity ?? null,
-        disposition:
-          resolution &&
-          (JSON.parse(resolution.payload) as { sourceVersion: string })
-            .sourceVersion === sourceVersion &&
-          (
-            JSON.parse(resolution.payload) as {
-              externalVersion: number;
-              localVersion: number;
-            }
-          ).externalVersion === (ext?.version ?? 0) &&
-          (JSON.parse(resolution.payload) as { localVersion: number })
-            .localVersion === r.lifecycleVersion
-            ? ((JSON.parse(resolution.payload) as { disposition?: string })
-                .disposition ?? 'resolved')
-            : !external
-              ? 'needsReview'
-              : external.amount === Number(local?.amount ?? r.amount) &&
-                  external.quantity ===
-                    (JSON.parse(r.lines) as { allocation: number }[]).reduce(
-                      (n, line) => n + line.allocation,
-                      0,
-                    )
-                ? 'matched'
-                : 'disputed',
-        version: `${r.lifecycleVersion}:${ext?.version ?? 0}:${resolution?.version ?? 0}:${sourceVersion}`,
-        updatedAt: r.updatedAt,
-        resolution: resolution
-          ? (JSON.parse(resolution.payload) as unknown)
+        url: row.billId
+          ? `${bridge.config.financeBaseUrl}/finance/` +
+            encodeURIComponent(row.billId)
           : null,
       };
     });
+    return {
+      finance,
+      financeBridgeEnabled: bridge.config.enabled,
+      id: r.id,
+      name: r.name,
+      number: r.number,
+      status: r.status,
+      supplierId: r.supplierId,
+      supplierName: r.supplierName ?? r.supplierId,
+      localAmount,
+      externalAmount: external?.amount ?? null,
+      difference: external ? external.amount - localAmount : null,
+      localQuantity,
+      externalQuantity: external?.quantity ?? null,
+      quantity: external?.quantity ?? null,
+      quantityDifference: external ? external.quantity - localQuantity : null,
+      externalReference: external?.reference ?? null,
+      provenance: external?.provenance ?? null,
+      recordedAt: external?.recordedAt ?? null,
+      legacyEvidence: !!raw && !external,
+      disposition: valid
+        ? saved.disposition
+        : !external
+          ? 'needsReview'
+          : external.amount === localAmount &&
+              external.quantity === localQuantity
+            ? 'matched'
+            : 'disputed',
+      version: `${r.lifecycleVersion}:${ext?.version ?? 0}:${resolution?.version ?? 0}:${sourceVersion}`,
+      updatedAt: r.updatedAt,
+      resolution: resolution
+        ? (JSON.parse(resolution.payload!) as unknown)
+        : null,
+    };
+  }
+  async ledger(a: ShowcaseActor) {
+    const records = await this.presentation(a, await this.deliveries(a));
+    return Promise.all(records.map((r) => this.ledgerRow(a, r)));
   }
   async resolve(
     a: ShowcaseActor,
@@ -777,40 +964,30 @@ export class ShowcaseService {
     key: string,
     disposition: 'resolved' | 'needsReview' = 'resolved',
   ) {
-    const r = await this.get(a, id);
     return this.db.transaction(async (tx) => {
-      const sources = await Promise.all(
-        ['opsOrders', 'opsInvoices', 'opsPayments', 'opsSettlements'].map(
-          (table) =>
-            this.repo<Doc>(table, a, tx).findMany({
-              filter: this.scope(a),
-              limit: 1000,
-            }),
-        ),
-      );
-      const sourceVersion = sourceSignature(sources);
-      const deliveries = await tx
-          .repository<Delivery>('showcaseDeliveries')
-          .findOne({ filter: { id } }),
-        ext = await tx
-          .repository<StoredRow>('showcaseExternal')
-          .findOne({ filter: { id } }),
-        repo = this.repo<StoredRow>('showcaseResolutions', a, tx),
-        old = await repo.findOne({ filter: { id } });
-      if (old && (JSON.parse(old.payload!) as { key: string }).key === key) {
-        const saved = JSON.parse(old.payload!) as {
-          reason: string;
-          actorId: string;
-        };
-        if (saved.reason !== reason || saved.actorId !== a.id)
+      const r = await this.get(a, id, tx),
+        current = await this.ledgerRow(a, r, tx);
+      const repo = this.repo<StoredRow>('showcaseResolutions', a, tx),
+        old = await repo.findOne({ filter: { id, ...this.scope(a) } });
+      const prior = old
+        ? (JSON.parse(old.payload!) as {
+            key: string;
+            reason: string;
+            actorId: string;
+          })
+        : null;
+      if (prior?.key === key) {
+        if (prior.reason !== reason || prior.actorId !== a.id)
           throw new ShowcaseError('KEY_REUSED');
         return old;
       }
-      if (
-        `${deliveries!.lifecycleVersion}:${ext?.version ?? 0}:${old?.version ?? 0}:${sourceVersion}` !==
-        version
-      )
-        throw new ShowcaseError('CONFLICT');
+      if (current.version !== version) throw new ShowcaseError('CONFLICT');
+      if (!current.provenance) throw new ShowcaseError('NO_EVIDENCE');
+      const sourceVersion = version.slice(version.lastIndexOf(':') + 1),
+        at = new Date().toISOString();
+      const ext = await this.repo<StoredRow>('showcaseExternal', a, tx).findOne(
+        { filter: { id, ...this.scope(a) } },
+      );
       const values = {
         id,
         organizationId: r.organizationId,
@@ -822,17 +999,85 @@ export class ShowcaseService {
           sourceVersion,
           actorId: a.id,
           key,
-          localVersion: deliveries!.lifecycleVersion,
+          localVersion: r.lifecycleVersion,
           externalVersion: ext?.version ?? 0,
-          at: new Date().toISOString(),
+          at,
           previous: old?.payload ?? null,
         }),
         version: (old?.version ?? 0) + 1,
-        updatedAt: new Date().toISOString(),
+        updatedAt: at,
       };
       return old
-        ? repo.updateOne({ filter: { id }, values })
+        ? repo.updateOne({ filter: { id, version: old.version }, values })
         : repo.createOne({ values });
+    });
+  }
+  async acknowledgment(
+    a: ShowcaseActor,
+    id: string,
+    input: {
+      amount: number;
+      quantity: number;
+      reference: string;
+      reason: string;
+      expectedVersion: string;
+      requestId: string;
+    },
+  ) {
+    return this.db.transaction(async (tx) => {
+      const r = await this.get(a, id, tx),
+        keys = this.repo<StoredRow>('showcaseKeys', a, tx);
+      const key = hash(`${a.organizationId}:${a.id}:ack:${input.requestId}`),
+        digest = hash(JSON.stringify({ id, ...input }));
+      const prior = await keys.findOne({ filter: { id: key } });
+      if (prior) {
+        if (
+          (JSON.parse(prior.payload!) as { digest: string }).digest !== digest
+        )
+          throw new ShowcaseError('KEY_REUSED');
+        return this.ledgerRow(a, r, tx);
+      }
+      if ((await this.ledgerRow(a, r, tx)).version !== input.expectedVersion)
+        throw new ShowcaseError('CONFLICT');
+      const repo = this.repo<StoredRow>('showcaseExternal', a, tx),
+        old = await repo.findOne({ filter: { id, ...this.scope(a) } }),
+        at = new Date().toISOString();
+      const values = {
+        id,
+        organizationId: r.organizationId,
+        supplierId: r.supplierId,
+        recordId: id,
+        payload: JSON.stringify({
+          ...input,
+          provenance: 'manual',
+          actorId: a.id,
+          recordedAt: at,
+          previous: old?.payload ?? null,
+        }),
+        version: (old?.version ?? 0) + 1,
+        updatedAt: at,
+      };
+      if (old) {
+        if (
+          !(await repo.updateOne({
+            filter: { id, version: old.version },
+            values,
+          }))
+        )
+          throw new ShowcaseError('CONFLICT');
+      } else await repo.createOne({ values });
+      await keys.createOne({
+        values: {
+          id: key,
+          organizationId: r.organizationId,
+          supplierId: r.supplierId,
+          recordId: id,
+          payload: JSON.stringify({ digest }),
+          version: 1,
+          updatedAt: at,
+        },
+      });
+      return this.ledgerRow(a, r, tx);
     });
   }
   async template(a: ShowcaseActor, revision?: number) {
@@ -883,6 +1128,7 @@ export class ShowcaseService {
     employee = 'showcase.delivery',
     recordId?: string,
   ) {
+    if (mode !== 'model') throw new ShowcaseError('DEMO_DISABLED');
     const context = recordId ? await this.get(a, recordId) : null;
     if (mode === 'model') {
       const agents = this.services.resolve(agentsToken),

@@ -88,6 +88,32 @@ describe('app client routes', () => {
     ).toBe(true);
   });
 
+  it('hides legacy finance navigation while retaining protected URLs', () => {
+    expect(
+      applicationRoutes[0].routes.find((route) => route.name === 'finance'),
+    ).toBeUndefined();
+    const finance = applicationRoutes[0].routes.filter((route) =>
+      route.path?.startsWith('/finance/'),
+    );
+    expect(finance).toHaveLength(5);
+    expect(
+      finance.every(
+        (route) =>
+          route.navigation === undefined &&
+          route.auth === 'required' &&
+          typeof route.authz === 'object',
+      ),
+    ).toBe(true);
+    expect(pagePaths(resolveRoutes().routes)).toContain('/finance/payments');
+    const supply = applicationRoutes[0].routes.find(
+      (route) => route.name === 'supply',
+    );
+    expect(supply?.navigation).toBeDefined();
+    expect(
+      supply?.children?.every((route) => route.navigation !== undefined),
+    ).toBe(true);
+  });
+
   it('keeps the inbox out of the application navigation', () => {
     // The inbox is reached from the header's inbox button, so it deliberately declares no menu entry.
     expect(

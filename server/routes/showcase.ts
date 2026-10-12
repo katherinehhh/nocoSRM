@@ -1,5 +1,5 @@
 import type { Application } from '@nocobase/app-server/application';
-import { getRequestTranslator } from '@nocobase/i18n/server';
+import { businessMembership } from '../services/business-membership.js';
 import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import {
@@ -36,6 +36,7 @@ const Id = z.object({ id: z.string().min(1).max(150) });
 const Key = z.object({ requestId: z.string().min(1).max(100) }).strict();
 const Query = z.object({
   q: z.string().max(200).optional(),
+  orderId: z.string().max(64).optional(),
   status: z.string().max(32).optional(),
   supplier: z.string().max(64).optional(),
   eventDirection: z.enum(['inbound', 'outbound', '']).optional(),
@@ -59,7 +60,7 @@ const Row = z
   .passthrough();
 const spec = (id: string, schema: z.ZodType = z.json(), list = false) =>
   describeRoute({
-    tags: ['Customer demonstration'],
+    tags: ['SRM delivery collaboration'],
     summary: id,
     operationId: `showcase${id}`,
     responses: {
@@ -73,7 +74,42 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
     auth = app.container.resolve(authenticationToken),
     authz = app.container.resolve(authorizationToken);
   router.use('*', auth.required(), authz.middleware());
+  router.use('*', async (c, next) => {
+    const path = c.req.path;
+    if (
+      path.endsWith('/scenarios') ||
+      path.includes('/integrations/demo/') ||
+      path.endsWith('/retry') ||
+      /\/assistant\/(prepare|commit)$/.test(path)
+    )
+      return c.json(
+        {
+          error: {
+            code: 410,
+            status: 'FAILED_PRECONDITION',
+            reason: 'DEMO_DISABLED',
+            domain: 'srm',
+            message: 'Demonstration operations are disabled.',
+          },
+        },
+        410,
+      );
+    await next();
+  });
   router.onError((e, c) => {
+    if (e instanceof ShowcaseError && e.code === 'DEMO_DISABLED')
+      return c.json(
+        {
+          error: {
+            code: 410,
+            status: 'FAILED_PRECONDITION',
+            reason: 'DEMO_DISABLED',
+            domain: 'srm',
+            message: 'Demonstration analysis is disabled.',
+          },
+        },
+        410,
+      );
     if (e instanceof LifecycleError) {
       const fields = lifecycleErrorFields(e);
       if (fields) e = new ApiError({ ...fields, domain: 'showcase' });
@@ -86,7 +122,11 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
           ? 'PERMISSION_DENIED'
           : e.code === 'NOT_FOUND'
             ? 'NOT_FOUND'
-            : ['MODEL_UNCONFIGURED', 'PRINT_FONT_UNCONFIGURED'].includes(e.code)
+            : [
+                  'MODEL_UNCONFIGURED',
+                  'PRINT_FONT_UNCONFIGURED',
+                  'WORKFLOW_DISABLED',
+                ].includes(e.code)
               ? 'UNAVAILABLE'
               : ['CONFLICT', 'KEY_REUSED'].includes(e.code)
                 ? 'ABORTED'
@@ -111,15 +151,13 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
     if (decision.effect === 'deny' || !decision.conditions?.database)
       throw new ShowcaseError('FORBIDDEN');
     const user = c.get('auth')!.user;
-    const member = await service.db
-      .repository<{
-        userId: string;
-        organizationId: string;
-        supplierId: string | null;
-      }>('opsMemberships')
-      .findOne({ filter: { userId: user.id } });
-    if (!member && !(await c.get('authz').snapshot()).unrestricted)
-      throw new ShowcaseError('FORBIDDEN');
+    const member = await businessMembership(
+      service.db,
+      app.container,
+      user.id,
+      (await c.get('authz').snapshot()).unrestricted,
+    );
+    if (!member) throw new ShowcaseError('FORBIDDEN');
     const actions = [];
     for (const action of showcaseActions)
       if (
@@ -157,7 +195,7 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
           resource: { type: 'settings', id: 'workflow' },
           action: 'manage',
         }),
-        externalMode: 'local',
+        externalMode: 'unconfigured',
         actions: a.actions,
         presets: agents.presets.list(),
         supplierId: a.supplierId,
@@ -226,6 +264,9 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
       'localAmount',
       'externalAmount',
       'difference',
+      'localQuantity',
+      'externalQuantity',
+      'quantityDifference',
       'attempts',
       'allocation',
       'boxes',
@@ -234,13 +275,21 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
     matching.sort((a, b) => {
       const left = a[sort],
         right = b[sort];
+      if (left === null || left === undefined)
+        return right === null || right === undefined
+          ? String(a.id).localeCompare(String(b.id))
+          : 1;
+      if (right === null || right === undefined) return -1;
       const v =
         typeof left === 'number' && typeof right === 'number'
           ? left - right
           : (typeof left === 'string' ? left : '').localeCompare(
               typeof right === 'string' ? right : '',
             );
-      return query.direction === 'asc' ? v : -v;
+      return (
+        (query.direction === 'asc' ? v : -v) ||
+        String(a.id).localeCompare(String(b.id))
+      );
     });
     return {
       data: matching.slice(
@@ -251,7 +300,7 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
         page: query.page,
         pageSize: query.pageSize,
         total: matching.length,
-        capped: rows.length >= 1000,
+        capped: false,
       },
     };
   }
@@ -270,16 +319,135 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
         ),
       ),
   );
-  router.get('/orders', spec('OrderOptions', z.json(), true), async (c) => {
-    const a = await actor(c, 'create');
-    const repo = service.repo('opsOrders', a);
-    const data = await repo.findMany({ filter: service.scope(a), limit: 100 });
-    const total = await repo.count({ filter: service.scope(a) });
-    return c.json({
-      data,
-      meta: { page: 1, pageSize: 100, total, capped: total > 100 },
-    });
-  });
+  router.get(
+    '/orders',
+    spec('OrderOptions', z.json(), true),
+    apiValidator('query', Query),
+    async (c) => {
+      const a = await actor(c, 'create'),
+        repo = service.repo<import('../../shared/operations.js').Doc>(
+          'opsOrders',
+          a,
+        ),
+        all: Partial<import('../../shared/operations.js').Doc>[] = [];
+      for (let offset = 0; ; offset += 1000) {
+        const batch = await repo.findMany({
+          filter: service.scope(a),
+          limit: 1000,
+          offset,
+          sort: (s) => s.field('id').asc(),
+        });
+        all.push(...batch);
+        if (batch.length < 1000) break;
+      }
+      const permission = await c.get('authz').authorize({
+        resource: { type: 'composite', id: 'operations.materials' },
+        action: 'view',
+      });
+      const materialPolicy =
+        permission.effect !== 'deny'
+          ? permission.conditions?.database?.opsMaterials
+          : undefined;
+      const rows = await Promise.all(
+        all
+          .filter(
+            (o) =>
+              ['confirmed', 'partial'].includes(o.status ?? '') &&
+              (!c.req.valid('query').orderId ||
+                o.id === c.req.valid('query').orderId),
+          )
+          .map(async (order) => {
+            const payload =
+              typeof order.payload === 'string'
+                ? (JSON.parse(
+                    order.payload,
+                  ) as import('../../shared/operations.js').Payload)
+                : order.payload;
+            const receiptRows = await service
+              .repo<import('../../shared/operations.js').Doc>('opsReceipts', a)
+              .findMany({
+                filter: { ...service.scope(a), status: 'posted' },
+                limit: 10001,
+              });
+            if (receiptRows.length > 10000)
+              throw new ShowcaseError('TOO_MANY_RECORDS');
+            const received = receiptRows
+              .map((r) => ({
+                ...r,
+                payload:
+                  typeof r.payload === 'string'
+                    ? (JSON.parse(
+                        r.payload,
+                      ) as import('../../shared/operations.js').Payload)
+                    : r.payload,
+              }))
+              .filter((r) => r.payload?.orderId === order.id);
+            const sourceLines = await Promise.all(
+              (payload?.lines ?? []).map(async (line) => {
+                const material = materialPolicy
+                  ? await service.db
+                      .repository<import('../../shared/operations.js').Doc>(
+                        'opsMaterials',
+                      )
+                      .withPolicy(materialPolicy)
+                      .findOne({
+                        filter: {
+                          id: line.materialId,
+                          organizationId: a.organizationId,
+                        },
+                      })
+                  : null;
+                return {
+                  ...line,
+                  quantity: Math.max(
+                    0,
+                    line.quantity -
+                      received
+                        .flatMap((r) => r.payload?.lines ?? [])
+                        .filter((l) => l.sourceLineId === line.id)
+                        .reduce((n, l) => n + (l.accepted ?? l.quantity), 0),
+                  ),
+                  sku: material?.number ?? '',
+                  name: material?.name ?? '',
+                };
+              }),
+            );
+            return {
+              ...order,
+              payload,
+              sourceLines: sourceLines.filter((line) => line.quantity > 0),
+            };
+          }),
+      );
+      return c.json(paged(rows, c.req.valid('query')));
+    },
+  );
+  router.post(
+    '/businessLedger/:id/acknowledgment',
+    spec('RecordAcknowledgment'),
+    apiValidator('param', Id),
+    apiValidator(
+      'json',
+      z
+        .object({
+          amount: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+          quantity: z.number().int().min(0).max(10000000),
+          reference: z.string().trim().min(1).max(100),
+          reason: z.string().trim().min(1).max(2000),
+          expectedVersion: z.string().min(1).max(256),
+          requestId: z.string().min(1).max(100),
+        })
+        .strict(),
+    ),
+    async (c) =>
+      c.json({
+        data: await service.acknowledgment(
+          await actor(c, 'sync'),
+          c.req.valid('param').id,
+          c.req.valid('json'),
+        ),
+      }),
+  );
   router.post(
     '/deliveryPlans',
     spec('CreateDelivery', Row),
@@ -385,7 +553,7 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
   router.get(
     '/deliveryPlans/:id/pdf',
     describeRoute({
-      tags: ['Customer demonstration'],
+      tags: ['SRM delivery collaboration'],
       summary: 'Delivery PDF',
       operationId: 'showcasePdf',
       responses: {
@@ -477,17 +645,38 @@ export const showcaseRoutes = defineApiRoutes((app: Application) => {
       });
     },
   );
-  router.get('/workBoard', spec('Board'), async (c) =>
-    c.json({
-      data: (await service.deliveries(await actor(c, 'view'))).slice(0, 200),
-      meta: { cap: 200 },
-    }),
+  router.get(
+    '/workBoard',
+    spec('Board'),
+    apiValidator('query', Query),
+    async (c) => {
+      const a = await actor(c, 'view'),
+        q = c.req.valid('query').q?.toLowerCase() ?? '';
+      const rows = (await service.deliveries(a))
+        .filter(
+          (r) =>
+            !q || `${r.number} ${r.name} ${r.lines}`.toLowerCase().includes(q),
+        )
+        .sort(
+          (a, b) =>
+            b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id),
+        );
+      return c.json({
+        data: rows.slice(0, 200),
+        meta: { cap: 200, total: rows.length },
+      });
+    },
   );
   router.get('/integrations/status', spec('Integrations'), async (c) => {
     await actor(c, 'sync');
     return c.json({
       data: {
-        mode: 'local',
+        mode:
+          process.env.SHOWCASE_WEBHOOK_SECRET &&
+          process.env.SHOWCASE_WEBHOOK_ORGANIZATION
+            ? 'webhook'
+            : 'unconfigured',
+        outboundConfigured: false,
         webhookReady:
           !!process.env.SHOWCASE_WEBHOOK_SECRET &&
           !!process.env.SHOWCASE_WEBHOOK_ORGANIZATION,
@@ -694,14 +883,7 @@ export const showcaseCallbacks = defineRootRoutes((app: Application) => {
   router.get(
     '/external-demo',
     app.container.resolve(authenticationToken).required(),
-    (c) => {
-      const external = c.req.query('view') === 'external';
-      const t = getRequestTranslator(c, 'app1');
-      // Copy is translated from the same session locale as the embedded application.
-      return c.html(
-        `<!doctype html><html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${t('showcase.externalTitle')}</title><body style="font-family:system-ui;margin:24px"><h1>${t('showcase.externalTitle')}</h1><p>${t('showcase.externalNotice')}</p>${external ? `<p>${t('showcase.externalBody')}</p>` : `<iframe title="${t('showcase.board')}" src="./integrations/embed/work-board" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads allow-popups" style="width:100%;height:80vh;border:1px solid currentColor"></iframe>`}</body></html>`,
-      );
-    },
+    (c) => c.json({ error: { reason: 'DEMO_DISABLED' } }, 410),
   );
   // Public external protocol endpoint: connector signature replaces session authentication.
   router.post('/callbacks/showcase', async (c) => {

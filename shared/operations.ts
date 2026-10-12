@@ -34,6 +34,7 @@ export interface Payload {
   lines?: Line[];
   sourceId?: string;
   orderId?: string;
+  expectedDeliveryDate?: string;
   receiptId?: string;
   invoiceId?: string;
   settlementId?: string;
@@ -98,6 +99,8 @@ export interface Doc {
   createdAt: string;
   updatedAt: string;
   demo: boolean;
+  admissionRequired?: boolean;
+  qualityRequired?: boolean;
 }
 export interface Transition {
   from: string[];
@@ -118,8 +121,8 @@ export const transitions: Partial<Record<Kind, Record<string, Transition>>> = {
   },
   orders: {
     submit: transition(['draft'], 'pending', ['buyer']),
-    approve: transition(['pending'], 'approved', ['admin']),
-    reject: transition(['pending'], 'draft', ['admin']),
+    approve: transition(['pending'], 'approved', ['admin', 'approver']),
+    reject: transition(['pending'], 'draft', ['admin', 'approver']),
     confirm: transition(['approved'], 'confirmed', ['supplier']),
     close: transition(['received'], 'closed', ['buyer']),
   },

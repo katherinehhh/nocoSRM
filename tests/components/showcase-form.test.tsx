@@ -1,3 +1,15 @@
+vi.mock('@nocobase/app-plugin-authorization/client', async (original) => ({
+  ...(await original<
+    typeof import('@nocobase/app-plugin-authorization/client')
+  >()),
+  useAuthorizationRevision: () => 0,
+}));
+vi.mock('@nocobase/app-plugin-authentication/client', async (original) => ({
+  ...(await original<
+    typeof import('@nocobase/app-plugin-authentication/client')
+  >()),
+  useAuthentication: () => ({ session: { user: { id: 'fixture-owner' } } }),
+}));
 import {
   render,
   screen,
@@ -28,7 +40,23 @@ async function setup() {
     method
       ? Promise.reject(new Error('network'))
       : Promise.resolve({
-          data: [{ id: 'order-1', number: 'PO001', name: '采购单' }],
+          data: [
+            {
+              id: 'order-1',
+              number: 'PO001',
+              name: '采购单',
+              version: 1,
+              sourceLines: [
+                {
+                  id: 'line-1',
+                  sku: 'ACTUAL-SKU',
+                  name: '实际物料',
+                  quantity: 8,
+                },
+              ],
+            },
+          ],
+          meta: { total: 1 },
         }),
   );
   const runtime = new I18nRuntime({
@@ -77,7 +105,13 @@ describe('delivery form', () => {
         method: 'POST',
         path: 'showcase/deliveryPlans',
         json: expect.objectContaining({
-          lines: [expect.objectContaining({ allocation: 30, unitsPerBox: 6 })],
+          lines: [
+            expect.objectContaining({
+              sourceLineId: 'line-1',
+              allocation: 8,
+              unitsPerBox: 1,
+            }),
+          ],
         }),
       }),
     );

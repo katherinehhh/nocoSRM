@@ -1,3 +1,5 @@
+import { useAuthorizationRevision } from '@nocobase/app-plugin-authorization/client';
+import { useAuthentication } from '@nocobase/app-plugin-authentication/client';
 import { useEffect } from 'react';
 import { useApiClient, useToaster } from '@nocobase/app-client';
 import { useTranslation } from '@nocobase/i18n/client';
@@ -10,15 +12,26 @@ export function useShowcase<T>(
   path: string,
   query: Record<string, string | number> = {},
   enabled = true,
+  editing = false,
 ) {
-  const api = useApiClient();
+  const api = useApiClient(),
+    { session } = useAuthentication(),
+    authorizationRevision = useAuthorizationRevision();
   return useQuery({
-    queryKey: ['showcase', path, query],
+    queryKey: [
+      'showcase',
+      path,
+      query,
+      session?.user.id,
+      authorizationRevision,
+    ],
     queryFn: ({ signal }) =>
       api.request<T>({ path: `showcase/${path}`, query, signal }),
     retry: false,
-    refetchInterval: path.startsWith('deliveryPlans/') ? 2000 : false,
-    enabled,
+    refetchInterval:
+      !editing && path.startsWith('deliveryPlans/') ? 2000 : false,
+    refetchOnWindowFocus: !editing,
+    enabled: enabled && !!session,
   });
 }
 export function useWrite() {
@@ -96,6 +109,28 @@ export interface Overview {
   presets: { key: string; name: string }[];
 }
 export interface Ledger {
+  financeBridgeEnabled?: boolean;
+  finance?: {
+    receiptNo: string;
+    receiptLineId: string;
+    updatedAt: string;
+    original: {
+      netAmount: number;
+      taxAmount: number;
+      grossAmount: number;
+    } | null;
+    id: string;
+    state: string;
+    error: string;
+    stale: boolean;
+    result: {
+      status: string;
+      netAmount: number;
+      taxAmount: number;
+      grossAmount: number;
+    } | null;
+    url: string | null;
+  }[];
   id: string;
   number: string;
   name: string;
@@ -106,6 +141,12 @@ export interface Ledger {
   externalAmount: number | null;
   difference: number | null;
   quantity: number | null;
+  localQuantity: number;
+  externalQuantity: number | null;
+  quantityDifference: number | null;
+  provenance: string | null;
+  recordedAt: string | null;
+  legacyEvidence: boolean;
   invoiceAmount: number;
   registeredPayments: number;
   disposition: string;

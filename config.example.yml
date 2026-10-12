@@ -159,3 +159,9 @@ logging:
     enabled: true
     # Set true for human-readable terminal output.
     pretty: false
+
+# Optional SRM / finance signed API synchronization. Keep the key out of this example.
+# Set SRM_FINANCE_BRIDGE_ENABLED=true and a shared SRM_FINANCE_BRIDGE_SECRET
+# (at least 32 characters) in both applications.
+# SRM_BRIDGE_BASE_URL=http://127.0.0.1:13001/main
+# FINANCE_BRIDGE_BASE_URL=http://localhost:13002/main

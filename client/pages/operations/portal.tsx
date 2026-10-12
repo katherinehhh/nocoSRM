@@ -5,6 +5,7 @@ import { PageHeader } from '#components/page-header';
 import { portalKinds } from '../../../shared/operations.js';
 import { useCopy, useCapabilities } from './common.js';
 import { State } from './states.js';
+import { isSrmResource } from '../../lib/srm-scope.js';
 
 export default function Portal() {
   const { t } = useCopy(),
@@ -23,7 +24,11 @@ export default function Portal() {
         />
         <div className='grid gap-5 md:grid-cols-2 xl:grid-cols-3'>
           {portalKinds
-            .filter((k) => caps.data?.data.permissions[k].includes('view'))
+            .filter(
+              (k) =>
+                isSrmResource(k) &&
+                caps.data?.data.permissions[k].includes('view'),
+            )
             .map((k) => (
               <Link
                 key={k}

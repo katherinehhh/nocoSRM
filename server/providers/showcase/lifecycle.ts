@@ -6,16 +6,21 @@ interface Types {
     'draft' | 'pending' | 'approved' | 'shipped' | 'completed' | 'rejected';
   services: {
     startFlow: (record: Delivery, key: string) => Promise<void>;
-    ack: (record: Delivery, key: string) => Promise<void>;
+    ack: (
+      record: Delivery,
+      key: string,
+    ) => Promise<{ acknowledged: boolean; externalState: string }>;
   };
 }
-const start = defineEffect<Types>({
+const startWorkflow = defineEffect<Types>({
   name: 'delivery.startWorkflow',
   timeoutMs: 30000,
   retry: { attempts: 3, backoffMs: 1000 },
-  async run({ record, services, idempotencyKey }) {
-    await services.startFlow(record, idempotencyKey);
-    return { started: true };
+  async run({ record, services }) {
+    await services.startFlow(
+      record,
+      `delivery-approval:${record.id}:${record.lifecycleVersion}`,
+    );
   },
 });
 const ack = defineEffect<Types>({
@@ -23,8 +28,7 @@ const ack = defineEffect<Types>({
   timeoutMs: 30000,
   retry: { attempts: 3, backoffMs: 1000 },
   async run({ record, services, idempotencyKey }) {
-    await services.ack(record, idempotencyKey);
-    return { acknowledged: true };
+    return services.ack(record, idempotencyKey);
   },
 });
 export const deliveryLifecycle = defineLifecycle<Types>({
@@ -43,11 +47,24 @@ export const deliveryLifecycle = defineLifecycle<Types>({
     submit: {
       from: 'draft',
       to: 'pending',
+      effects: [startWorkflow],
       set: ({ actor, now }) => ({
         submittedBy: actor.id,
         updatedAt: now.toISOString(),
       }),
-      effects: [start],
+    },
+    submissionFailed: {
+      from: 'pending',
+      to: 'draft',
+      manual: false,
+      guard: ({ actor, record }) =>
+        actor.system && !record.workflowRunId
+          ? true
+          : {
+              code: 'INVALID_STATE',
+              message: 'Only an unstarted submission can be restored.',
+            },
+      set: ({ now }) => ({ submittedBy: null, updatedAt: now.toISOString() }),
     },
     approve: {
       from: 'pending',

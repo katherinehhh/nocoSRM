@@ -37,7 +37,7 @@ export const showcaseActions = [
 export const showcaseResource = defineCompositeResource(
   'showcase.delivery',
   (r) => {
-    let out = r.title('Customer demonstration');
+    let out = r.title('Delivery collaboration');
     for (const action of showcaseActions)
       out = out.action(action, (a) => {
         let g = a.title(action);

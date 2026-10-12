@@ -236,8 +236,18 @@ export default function Detail({ related = false }: { related?: boolean }) {
               </Table>
             </div>
           )}
+          {kind === 'policies' &&
+            ['matching', 'payment'].includes(doc.payload.template ?? '') && (
+              <p className='text-sm text-muted-foreground'>
+                {t('srm.financePolicyReadonly')}
+              </p>
+            )}
           <div className='flex flex-wrap gap-2'>
             {!related &&
+              !(
+                kind === 'policies' &&
+                ['matching', 'payment'].includes(doc.payload.template ?? '')
+              ) &&
               permitted.includes('edit') &&
               ['draft', 'active', 'disabled'].includes(doc.status) && (
                 <Button
@@ -253,7 +263,12 @@ export default function Detail({ related = false }: { related?: boolean }) {
             {Object.entries(transitions[kind] ?? {})
               .filter(
                 ([key, r]) =>
-                  r.from.includes(doc.status) && permitted.includes(key),
+                  !(
+                    kind === 'policies' &&
+                    ['matching', 'payment'].includes(doc.payload.template ?? '')
+                  ) &&
+                  r.from.includes(doc.status) &&
+                  permitted.includes(key),
               )
               .map(([key]) => (
                 <Button

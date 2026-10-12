@@ -1,3 +1,5 @@
+import { useAuthorizationRevision } from '@nocobase/app-plugin-authorization/client';
+import { useAuthentication } from '@nocobase/app-plugin-authentication/client';
 import { useApiClient, ApiClientError } from '@nocobase/app-client';
 import { useTranslation } from '@nocobase/i18n/client';
 import { useQuery } from '@tanstack/react-query';
@@ -34,12 +36,20 @@ export function useData<T>(
   query: Record<string, string | number> = {},
   enabled = true,
 ) {
-  const api = useApiClient();
+  const api = useApiClient(),
+    { session } = useAuthentication(),
+    authorizationRevision = useAuthorizationRevision();
   return useQuery({
-    queryKey: ['operations', path, query],
+    queryKey: [
+      'operations',
+      path,
+      query,
+      session?.user.id,
+      authorizationRevision,
+    ],
     queryFn: ({ signal }) =>
       api.request<T>({ path: `operations/${path}`, query, signal }),
-    enabled,
+    enabled: enabled && !!session,
     retry: false,
   });
 }

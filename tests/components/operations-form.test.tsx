@@ -1,3 +1,15 @@
+vi.mock('@nocobase/app-plugin-authorization/client', async (original) => ({
+  ...(await original<
+    typeof import('@nocobase/app-plugin-authorization/client')
+  >()),
+  useAuthorizationRevision: () => 0,
+}));
+vi.mock('@nocobase/app-plugin-authentication/client', async (original) => ({
+  ...(await original<
+    typeof import('@nocobase/app-plugin-authentication/client')
+  >()),
+  useAuthentication: () => ({ session: { user: { id: 'fixture-owner' } } }),
+}));
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi } from 'vitest';
 import { MemoryRouter } from 'react-router';

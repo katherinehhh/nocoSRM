@@ -1,3 +1,8 @@
+import {
+  requireAdmission,
+  requireInspection,
+  requireAwardSnapshot,
+} from '../../srm-core/guards.js';
 import type { FilterAst, FilterNode } from '@nocobase/repository-input';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseManager, RepositoryPolicy } from '@nocobase/db';
@@ -58,7 +63,7 @@ const payloadFields: Record<Kind, string[]> = {
   materials: ['unit', 'reorderPoint', 'openingStock', 'warehouseId'],
   warehouses: [],
   plans: ['lines'],
-  orders: ['lines', 'sourceId'],
+  orders: ['lines', 'sourceId', 'expectedDeliveryDate'],
   dispatches: ['orderId', 'lines', 'tracking'],
   receipts: ['orderId', 'lines', 'warehouseId'],
   invoices: ['orderId', 'lines', 'invoiceNumber'],
@@ -246,7 +251,19 @@ export class OperationsService {
       new Date(date).toISOString().slice(0, 10) !== date
     )
       fail('INVALID', 'businessDate');
+    if (
+      k === 'policies' &&
+      ['matching', 'payment'].includes(input.payload?.template ?? '')
+    )
+      fail('FINANCE_EXTERNAL');
     let supplierId = a.supplierId ?? input.supplierId ?? null;
+    if (
+      k === 'orders' &&
+      input.payload?.expectedDeliveryDate &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(input.payload.expectedDeliveryDate) ||
+        Number.isNaN(Date.parse(input.payload.expectedDeliveryDate)))
+    )
+      fail('INVALID', 'expectedDeliveryDate');
     const payload: Payload = {};
     for (const key of payloadFields[k])
       if (input.payload?.[key as keyof Payload] !== undefined)
@@ -259,6 +276,8 @@ export class OperationsService {
         supplierId,
       );
       if (supplier.status !== 'active') fail('SUPPLIER_INACTIVE');
+      if (['orders', 'plans', 'dispatches'].includes(k))
+        await requireAdmission(c, supplier);
     }
     if (
       [
@@ -314,6 +333,8 @@ export class OperationsService {
       )
         fail('INVALID', 'sourceLineId');
     }
+    if (k === 'orders')
+      await requireAwardSnapshot(c, a.organizationId, supplierId, payload);
     if (payload.orderId) {
       const order = await this.get(c, a, 'orders', payload.orderId);
       if (k === 'receipts' && !supplierId) supplierId = order.supplierId;
@@ -326,6 +347,11 @@ export class OperationsService {
         );
         if (!source || source.materialId !== line.materialId)
           fail('INVALID', 'sourceLineId');
+        if (
+          ['receipts', 'dispatches'].includes(k) &&
+          (source.price !== line.price || source.taxRate !== line.taxRate)
+        )
+          fail('SOURCE_CHANGED', 'price');
       }
     }
     if (
@@ -437,10 +463,11 @@ export class OperationsService {
     action: string,
   ) {
     const next = { ...d, ...patch, version: d.version + 1, updatedAt: now() };
-    await this.repo(c, tables[k], a).updateOne({
+    const saved = await this.repo(c, tables[k], a).updateMany({
       filter: { id: d.id, version: d.version, ...documentFilter(a) },
       values: { ...next, payload: JSON.stringify(next.payload) },
     });
+    if (saved.updatedCount !== 1) fail('VERSION_CONFLICT');
     await this.audit(c, a, k, next, action, d.status);
     return next;
   }
@@ -450,11 +477,12 @@ export class OperationsService {
     k: Kind,
     input: Partial<Doc>,
     demo = false,
+    recordId: string = randomUUID(),
   ) {
     const values = await this.validate(c, a, k, input);
     const d: Doc = {
       ...values,
-      id: randomUUID(),
+      id: recordId,
       number: `${k.slice(0, 3).toUpperCase()}-${Date.now().toString(36).toUpperCase()}-${randomUUID().slice(0, 4).toUpperCase()}`,
       organizationId: a.organizationId,
       status: initialStatus(k),
@@ -463,6 +491,13 @@ export class OperationsService {
       createdAt: now(),
       updatedAt: now(),
       demo,
+      ...(k === 'suppliers'
+        ? {
+            admissionRequired: !a.system && !demo,
+            status: !a.system && !demo ? 'candidate' : initialStatus(k),
+          }
+        : {}),
+      ...(k === 'receipts' ? { qualityRequired: !a.system && !demo } : {}),
     };
     await this.repo(c, tables[k], a).createOne({
       values: { ...d, payload: JSON.stringify(d.payload) },
@@ -476,9 +511,26 @@ export class OperationsService {
   async edit(a: Actor, k: Kind, id: string, input: Partial<Doc>) {
     return this.db.transaction(async (c) => {
       const d = await this.get(c, a, k, id);
+      if (
+        k === 'policies' &&
+        ['matching', 'payment'].includes(d.payload.template ?? '')
+      )
+        fail('FINANCE_EXTERNAL');
       if (d.version !== input.version) fail('VERSION_CONFLICT');
       if (!['draft', 'active', 'disabled'].includes(d.status))
         fail('INVALID_STATE');
+      if (k === 'orders' && d.payload.sourceId) {
+        const awarded = await c.repository('srmCoreRecords').findOne({
+          filter: {
+            id: d.payload.sourceId,
+            kind: 'rfq',
+            organizationId: a.organizationId,
+            status: 'awarded',
+          },
+        });
+        if (awarded && input.payload?.sourceId !== d.payload.sourceId)
+          fail('SOURCE_CHANGED');
+      }
       const v = await this.validate(c, a, k, { ...input, id });
       return this.persist(c, a, k, d, v, 'edit');
     });
@@ -588,7 +640,28 @@ export class OperationsService {
       `${k}:${id}:${action}:${input.requestId}`,
       async (c) => {
         const d = await this.get(c, a, k, id);
+        if (
+          k === 'policies' &&
+          ['matching', 'payment'].includes(d.payload.template ?? '')
+        )
+          fail('FINANCE_EXTERNAL');
         if (d.version !== input.version) fail('VERSION_CONFLICT');
+        if (k === 'suppliers' && action === 'enable')
+          await requireAdmission(c, d);
+        if (
+          k === 'orders' &&
+          ['submit', 'confirm'].includes(action) &&
+          d.supplierId
+        ) {
+          const supplier = await this.get(
+            c,
+            { ...a, supplierId: null },
+            'suppliers',
+            d.supplierId,
+          );
+          if (supplier.status !== 'active') fail('SUPPLIER_INACTIVE');
+          await requireAdmission(c, supplier);
+        }
         const rule = transitions[k]?.[action];
         if (!rule || !rule.from.includes(d.status)) fail('INVALID_STATE');
         if (
@@ -633,6 +706,7 @@ export class OperationsService {
           }
         }
         if (k === 'receipts' && action === 'post') {
+          await requireInspection(c, d);
           const order = await this.get(c, a, 'orders', d.payload.orderId!);
           if (!['confirmed', 'partial'].includes(order.status))
             fail('INVALID_STATE');
@@ -793,6 +867,8 @@ export class OperationsService {
   }
   async preview(c: Connection, a: Actor, policy: Doc): Promise<RunItem[]> {
     const { template, threshold = 3 } = policy.payload;
+    if (['matching', 'payment'].includes(template ?? ''))
+      fail('FINANCE_EXTERNAL');
     let targets: Doc[] = [];
     let kind: Kind = 'orders';
     if (template === 'reorder') {
@@ -1011,7 +1087,9 @@ export class OperationsService {
       status: 'enabled',
     });
     const results = [];
-    for (const p of list) {
+    for (const p of list.filter(
+      (p) => !['matching', 'payment'].includes(p.payload.template ?? ''),
+    )) {
       try {
         results.push(
           await this.runPolicy(

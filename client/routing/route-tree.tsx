@@ -16,12 +16,16 @@ export function renderRouteTree(
     <Route
       key={routeKey(route)}
       path={
-        parentPath
-          ? route.path === parentPath ||
-            parentPath.startsWith(`${route.path.replace(/\/$/, '')}/`)
-            ? ''
-            : route.path.slice(parentPath === '/' ? 1 : parentPath.length + 1)
-          : route.path
+        // A pure root navigation group is pathless: otherwise it can win the
+        // root URL over the actual landing page and render an empty Outlet.
+        !route.componentLoader && route.path === '/'
+          ? undefined
+          : parentPath
+            ? route.path === parentPath ||
+              parentPath.startsWith(`${route.path.replace(/\/$/, '')}/`)
+              ? ''
+              : route.path.slice(parentPath === '/' ? 1 : parentPath.length + 1)
+            : route.path
       }
       element={
         route.componentLoader ? (
